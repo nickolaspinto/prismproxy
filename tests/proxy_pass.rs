@@ -1,5 +1,5 @@
 mod common;
-use common::{test_config, MockUpstream, TestProxy};
+use common::{test_config, test_config_with_timeout, MockUpstream, SlowUpstream, TestProxy};
 
 #[tokio::test]
 async fn proxies_to_upstream() {
@@ -45,4 +45,15 @@ async fn handles_concurrent_requests() {
     for h in handles {
         assert_eq!(h.await.unwrap().status(), 200);
     }
+}
+
+#[tokio::test]
+async fn returns_504_when_upstream_times_out() {
+    let upstream = SlowUpstream::start(5000).await; // 5s delay
+    let addr = format!("127.0.0.1:{}", upstream.addr.port());
+    // Proxy with 200ms timeout — upstream will never respond in time
+    let proxy = TestProxy::start(test_config_with_timeout(vec![("/", &addr)], 200)).await;
+
+    let resp = reqwest::get(proxy.url("/test")).await.unwrap();
+    assert_eq!(resp.status(), 504);
 }

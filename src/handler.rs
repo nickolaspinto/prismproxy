@@ -47,7 +47,8 @@ async fn route(
         .find(|r| path.starts_with(&r.path_prefix))
         .ok_or_else(|| ProxyError::NoRoute(path))?;
 
-    proxy::forward(req, &route.upstream, &pool).await
+    let timeout = std::time::Duration::from_millis(config.server.timeout_ms);
+    proxy::forward(req, &route.upstream, &pool, timeout).await
 }
 
 fn health_response() -> Response<Full<Bytes>> {
@@ -62,6 +63,7 @@ fn error_response(err: ProxyError) -> Response<Full<Bytes>> {
     let (status, body) = match &err {
         ProxyError::NoRoute(_) => (StatusCode::NOT_FOUND, err.to_string()),
         ProxyError::UpstreamConnect(_) => (StatusCode::BAD_GATEWAY, err.to_string()),
+        ProxyError::Timeout(_) => (StatusCode::GATEWAY_TIMEOUT, err.to_string()),
         _ => (StatusCode::INTERNAL_SERVER_ERROR, "internal error".into()),
     };
     Response::builder()

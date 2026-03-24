@@ -16,4 +16,7 @@ pub enum ProxyError {
 
     #[error("upstream: {0}")]
     UpstreamConnect(String),
+
+    #[error("timeout: {0}")]
+    Timeout(String),
 }

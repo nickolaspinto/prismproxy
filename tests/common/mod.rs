@@ -44,6 +44,24 @@ pub fn test_config(routes: Vec<(&str, &str)>) -> Config {
         server: ServerConfig {
             listen: "127.0.0.1:0".to_string(),
             max_idle_connections: 2,
+            timeout_ms: 5000,
+        },
+        routes: routes
+            .into_iter()
+            .map(|(prefix, upstream)| RouteConfig {
+                path_prefix: prefix.to_string(),
+                upstream: upstream.to_string(),
+            })
+            .collect(),
+    }
+}
+
+pub fn test_config_with_timeout(routes: Vec<(&str, &str)>, timeout_ms: u64) -> Config {
+    Config {
+        server: ServerConfig {
+            listen: "127.0.0.1:0".to_string(),
+            max_idle_connections: 2,
+            timeout_ms,
         },
         routes: routes
             .into_iter()
@@ -81,6 +99,50 @@ impl MockUpstream {
                                             .status(status)
                                             .header("x-upstream", "mock")
                                             .body(Full::new(Bytes::from(body)))
+                                            .unwrap(),
+                                    )
+                                }))
+                                .await
+                                .ok();
+                        });
+                    }
+                    _ = &mut rx => break,
+                }
+            }
+        });
+
+        Self {
+            addr,
+            _shutdown: tx,
+        }
+    }
+}
+
+pub struct SlowUpstream {
+    pub addr: SocketAddr,
+    _shutdown: tokio::sync::oneshot::Sender<()>,
+}
+
+impl SlowUpstream {
+    pub async fn start(delay_ms: u64) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
+
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    result = listener.accept() => {
+                        let (stream, _) = result.unwrap();
+                        let io = TokioIo::new(stream);
+                        tokio::spawn(async move {
+                            http1::Builder::new()
+                                .serve_connection(io, service_fn(move |_req| async move {
+                                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                                    Ok::<_, Infallible>(
+                                        Response::builder()
+                                            .status(StatusCode::OK)
+                                            .body(Full::new(Bytes::from("slow")))
                                             .unwrap(),
                                     )
                                 }))

@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::{Request, Response};
+use std::time::Duration;
 
 use crate::error::ProxyError;
 use crate::pool::ConnectionPool;
@@ -17,6 +18,20 @@ const HOP_BY_HOP: &[&str] = &[
 ];
 
 pub async fn forward(
+    req: Request<hyper::body::Incoming>,
+    upstream_addr: &str,
+    pool: &ConnectionPool,
+    timeout: Duration,
+) -> Result<Response<Full<Bytes>>, ProxyError> {
+    match tokio::time::timeout(timeout, forward_inner(req, upstream_addr, pool)).await {
+        Ok(result) => result,
+        Err(_) => Err(ProxyError::Timeout(format!(
+            "{upstream_addr}: exceeded {timeout:?}"
+        ))),
+    }
+}
+
+async fn forward_inner(
     req: Request<hyper::body::Incoming>,
     upstream_addr: &str,
     pool: &ConnectionPool,
@@ -39,7 +54,6 @@ pub async fn forward(
         .await
         .map_err(ProxyError::Hyper)?;
 
-    // Collect full response body before releasing connection
     let (resp_parts, resp_body) = resp.into_parts();
     let resp_bytes = resp_body
         .collect()
@@ -47,7 +61,6 @@ pub async fn forward(
         .map_err(ProxyError::Hyper)?
         .to_bytes();
 
-    // Return connection to pool
     pool.release(upstream_addr, sender).await;
 
     Ok(Response::from_parts(resp_parts, Full::new(resp_bytes)))

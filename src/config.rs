@@ -15,10 +15,16 @@ pub struct ServerConfig {
     pub listen: String,
     #[serde(default = "default_max_idle")]
     pub max_idle_connections: usize,
+    #[serde(default = "default_timeout_ms")]
+    pub timeout_ms: u64,
 }
 
 fn default_max_idle() -> usize {
     10
+}
+
+fn default_timeout_ms() -> u64 {
+    30_000
 }
 
 #[derive(Debug, Clone, Deserialize)]
