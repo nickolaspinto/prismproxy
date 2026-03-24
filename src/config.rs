@@ -37,6 +37,32 @@ impl Config {
     pub fn parse(s: &str) -> Result<Self, ProxyError> {
         toml::from_str(s).map_err(|e| ProxyError::Config(format!("parse: {e}")))
     }
+
+    pub fn validate(&self) -> Result<(), ProxyError> {
+        // Validate listen address
+        self.server
+            .listen
+            .parse::<std::net::SocketAddr>()
+            .map_err(|e| ProxyError::Config(format!("invalid listen address '{}': {e}", self.server.listen)))?;
+
+        // Validate routes
+        for (i, route) in self.routes.iter().enumerate() {
+            if route.path_prefix.is_empty() || !route.path_prefix.starts_with('/') {
+                return Err(ProxyError::Config(format!(
+                    "route[{i}]: path_prefix must start with '/', got '{}'",
+                    route.path_prefix
+                )));
+            }
+            route.upstream.parse::<std::net::SocketAddr>().map_err(|e| {
+                ProxyError::Config(format!(
+                    "route[{i}]: invalid upstream address '{}': {e}",
+                    route.upstream
+                ))
+            })?;
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

@@ -15,6 +15,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| "config/default.toml".to_string());
 
     let config = config::Config::from_file(&config_path)?;
+    config.validate()?;
     tracing::info!(listen = %config.server.listen, routes = config.routes.len(), "loaded config");
 
     let listener = TcpListener::bind(&config.server.listen).await?;
