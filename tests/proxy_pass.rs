@@ -38,9 +38,9 @@ async fn handles_concurrent_requests() {
     let mut handles = vec![];
     for _ in 0..10 {
         let url = proxy.url("/test");
-        handles.push(tokio::spawn(async move {
-            reqwest::get(&url).await.unwrap()
-        }));
+        handles.push(tokio::spawn(
+            async move { reqwest::get(&url).await.unwrap() },
+        ));
     }
     for h in handles {
         assert_eq!(h.await.unwrap().status(), 200);

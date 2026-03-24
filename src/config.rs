@@ -31,10 +31,10 @@ impl Config {
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, ProxyError> {
         let content = std::fs::read_to_string(path.as_ref())
             .map_err(|e| ProxyError::Config(format!("read: {e}")))?;
-        Self::from_str(&content)
+        Self::parse(&content)
     }
 
-    pub fn from_str(s: &str) -> Result<Self, ProxyError> {
+    pub fn parse(s: &str) -> Result<Self, ProxyError> {
         toml::from_str(s).map_err(|e| ProxyError::Config(format!("parse: {e}")))
     }
 }
@@ -57,7 +57,7 @@ upstream = "127.0.0.1:3000"
 path_prefix = "/"
 upstream = "127.0.0.1:8000"
 "#;
-        let cfg = Config::from_str(toml).unwrap();
+        let cfg = Config::parse(toml).unwrap();
         assert_eq!(cfg.server.listen, "127.0.0.1:8080");
         assert_eq!(cfg.server.max_idle_connections, 10);
         assert_eq!(cfg.routes.len(), 2);
@@ -67,20 +67,20 @@ upstream = "127.0.0.1:8000"
     #[test]
     fn missing_server_fails() {
         let toml = "[[routes]]\npath_prefix = \"/\"\nupstream = \"x\"";
-        assert!(Config::from_str(toml).is_err());
+        assert!(Config::parse(toml).is_err());
     }
 
     #[test]
     fn empty_routes_ok() {
         let toml = "[server]\nlisten = \"0.0.0.0:80\"";
-        let cfg = Config::from_str(toml).unwrap();
+        let cfg = Config::parse(toml).unwrap();
         assert!(cfg.routes.is_empty());
     }
 
     #[test]
     fn default_max_idle() {
         let toml = "[server]\nlisten = \"0.0.0.0:80\"";
-        let cfg = Config::from_str(toml).unwrap();
+        let cfg = Config::parse(toml).unwrap();
         assert_eq!(cfg.server.max_idle_connections, 10);
     }
 }

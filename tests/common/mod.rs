@@ -21,16 +21,17 @@ impl TestProxy {
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
         tokio::spawn(async move {
-            prismproxy::server::run_with_listener(
-                listener,
-                config,
-                async { rx.await.ok(); },
-            )
+            prismproxy::server::run_with_listener(listener, config, async {
+                rx.await.ok();
+            })
             .await
             .unwrap();
         });
 
-        Self { addr, _shutdown: tx }
+        Self {
+            addr,
+            _shutdown: tx,
+        }
     }
 
     pub fn url(&self, path: &str) -> String {
@@ -92,6 +93,9 @@ impl MockUpstream {
             }
         });
 
-        Self { addr, _shutdown: tx }
+        Self {
+            addr,
+            _shutdown: tx,
+        }
     }
 }

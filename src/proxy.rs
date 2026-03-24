@@ -41,7 +41,11 @@ pub async fn forward(
 
     // Collect full response body before releasing connection
     let (resp_parts, resp_body) = resp.into_parts();
-    let resp_bytes = resp_body.collect().await.map_err(ProxyError::Hyper)?.to_bytes();
+    let resp_bytes = resp_body
+        .collect()
+        .await
+        .map_err(ProxyError::Hyper)?
+        .to_bytes();
 
     // Return connection to pool
     pool.release(upstream_addr, sender).await;

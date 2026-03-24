@@ -8,10 +8,7 @@ async fn routes_by_prefix() {
     let api_addr = format!("127.0.0.1:{}", api.addr.port());
     let web_addr = format!("127.0.0.1:{}", web.addr.port());
 
-    let proxy = TestProxy::start(test_config(vec![
-        ("/api", &api_addr),
-        ("/", &web_addr),
-    ])).await;
+    let proxy = TestProxy::start(test_config(vec![("/api", &api_addr), ("/", &web_addr)])).await;
 
     let resp = reqwest::get(proxy.url("/api/users")).await.unwrap();
     assert_eq!(resp.text().await.unwrap(), "api");
@@ -27,10 +24,7 @@ async fn first_match_wins() {
     let s_addr = format!("127.0.0.1:{}", specific.addr.port());
     let g_addr = format!("127.0.0.1:{}", general.addr.port());
 
-    let proxy = TestProxy::start(test_config(vec![
-        ("/api/v2", &s_addr),
-        ("/api", &g_addr),
-    ])).await;
+    let proxy = TestProxy::start(test_config(vec![("/api/v2", &s_addr), ("/api", &g_addr)])).await;
 
     let r = reqwest::get(proxy.url("/api/v2/x")).await.unwrap();
     assert_eq!(r.text().await.unwrap(), "specific");
