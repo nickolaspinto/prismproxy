@@ -28,3 +28,21 @@ async fn returns_502_when_upstream_down() {
     let resp = reqwest::get(proxy.url("/test")).await.unwrap();
     assert_eq!(resp.status(), 502);
 }
+
+#[tokio::test]
+async fn handles_concurrent_requests() {
+    let upstream = MockUpstream::start(200, "ok").await;
+    let addr = format!("127.0.0.1:{}", upstream.addr.port());
+    let proxy = TestProxy::start(test_config(vec![("/", &addr)])).await;
+
+    let mut handles = vec![];
+    for _ in 0..10 {
+        let url = proxy.url("/test");
+        handles.push(tokio::spawn(async move {
+            reqwest::get(&url).await.unwrap()
+        }));
+    }
+    for h in handles {
+        assert_eq!(h.await.unwrap().status(), 200);
+    }
+}

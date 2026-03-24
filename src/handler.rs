@@ -7,16 +7,18 @@ use tracing::{error, info};
 
 use crate::config::Config;
 use crate::error::ProxyError;
+use crate::pool::ConnectionPool;
 use crate::proxy;
 
 pub async fn handle(
     config: Arc<Config>,
+    pool: Arc<ConnectionPool>,
     req: Request<hyper::body::Incoming>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let method = req.method().clone();
     let path = req.uri().path().to_string();
 
-    match route(config, req).await {
+    match route(config, pool, req).await {
         Ok(resp) => {
             info!(%method, %path, status = %resp.status(), "response");
             Ok(resp)
@@ -30,6 +32,7 @@ pub async fn handle(
 
 async fn route(
     config: Arc<Config>,
+    pool: Arc<ConnectionPool>,
     req: Request<hyper::body::Incoming>,
 ) -> Result<Response<Full<Bytes>>, ProxyError> {
     let path = req.uri().path().to_string();
@@ -44,7 +47,7 @@ async fn route(
         .find(|r| path.starts_with(&r.path_prefix))
         .ok_or_else(|| ProxyError::NoRoute(path))?;
 
-    proxy::forward(req, &route.upstream).await
+    proxy::forward(req, &route.upstream, &pool).await
 }
 
 fn health_response() -> Response<Full<Bytes>> {
