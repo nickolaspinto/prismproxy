@@ -1,5 +1,6 @@
 use prismproxy::config;
 use prismproxy::server;
+use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -16,6 +17,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = config::Config::from_file(&config_path)?;
     tracing::info!(listen = %config.server.listen, routes = config.routes.len(), "loaded config");
 
-    server::run(config).await?;
+    let listener = TcpListener::bind(&config.server.listen).await?;
+    tracing::info!("listening on {}", config.server.listen);
+
+    server::run_with_listener(listener, config, async {
+        tokio::signal::ctrl_c().await.ok();
+    })
+    .await?;
     Ok(())
 }
