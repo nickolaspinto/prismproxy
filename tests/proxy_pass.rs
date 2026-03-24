@@ -1,5 +1,7 @@
 mod common;
-use common::{test_config, test_config_with_timeout, EchoUpstream, MockUpstream, SlowUpstream, TestProxy};
+use common::{
+    test_config, test_config_with_timeout, EchoUpstream, MockUpstream, SlowUpstream, TestProxy,
+};
 
 #[tokio::test]
 async fn proxies_to_upstream() {

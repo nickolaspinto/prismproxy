@@ -49,7 +49,12 @@ impl Config {
         self.server
             .listen
             .parse::<std::net::SocketAddr>()
-            .map_err(|e| ProxyError::Config(format!("invalid listen address '{}': {e}", self.server.listen)))?;
+            .map_err(|e| {
+                ProxyError::Config(format!(
+                    "invalid listen address '{}': {e}",
+                    self.server.listen
+                ))
+            })?;
 
         // Validate routes
         for (i, route) in self.routes.iter().enumerate() {
@@ -59,12 +64,15 @@ impl Config {
                     route.path_prefix
                 )));
             }
-            route.upstream.parse::<std::net::SocketAddr>().map_err(|e| {
-                ProxyError::Config(format!(
-                    "route[{i}]: invalid upstream address '{}': {e}",
-                    route.upstream
-                ))
-            })?;
+            route
+                .upstream
+                .parse::<std::net::SocketAddr>()
+                .map_err(|e| {
+                    ProxyError::Config(format!(
+                        "route[{i}]: invalid upstream address '{}': {e}",
+                        route.upstream
+                    ))
+                })?;
         }
 
         Ok(())
