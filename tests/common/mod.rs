@@ -161,3 +161,62 @@ impl SlowUpstream {
         }
     }
 }
+
+pub struct EchoUpstream {
+    pub addr: SocketAddr,
+    _shutdown: tokio::sync::oneshot::Sender<()>,
+}
+
+impl EchoUpstream {
+    pub async fn start() -> Self {
+        use http_body_util::BodyExt;
+        use hyper::body::Incoming;
+        use hyper::Request;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
+
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    result = listener.accept() => {
+                        let (stream, _) = result.unwrap();
+                        let io = TokioIo::new(stream);
+                        tokio::spawn(async move {
+                            http1::Builder::new()
+                                .serve_connection(io, service_fn(|req: Request<Incoming>| async move {
+                                    let method = req.method().to_string();
+                                    let path = req.uri().path().to_string();
+                                    let body_bytes = req.into_body().collect().await.unwrap().to_bytes();
+                                    let body_str = String::from_utf8_lossy(&body_bytes).to_string();
+                                    let escaped_body = body_str.replace('\\', "\\\\").replace('"', "\\\"");
+
+                                    let json = format!(
+                                        r#"{{"method":"{}","path":"{}","body":"{}"}}"#,
+                                        method, path, escaped_body
+                                    );
+
+                                    Ok::<_, Infallible>(
+                                        Response::builder()
+                                            .status(StatusCode::OK)
+                                            .header("content-type", "application/json")
+                                            .body(Full::new(Bytes::from(json)))
+                                            .unwrap(),
+                                    )
+                                }))
+                                .await
+                                .ok();
+                        });
+                    }
+                    _ = &mut rx => break,
+                }
+            }
+        });
+
+        Self {
+            addr,
+            _shutdown: tx,
+        }
+    }
+}

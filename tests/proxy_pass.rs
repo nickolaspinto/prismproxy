@@ -1,5 +1,5 @@
 mod common;
-use common::{test_config, test_config_with_timeout, MockUpstream, SlowUpstream, TestProxy};
+use common::{test_config, test_config_with_timeout, EchoUpstream, MockUpstream, SlowUpstream, TestProxy};
 
 #[tokio::test]
 async fn proxies_to_upstream() {
@@ -56,4 +56,65 @@ async fn returns_504_when_upstream_times_out() {
 
     let resp = reqwest::get(proxy.url("/test")).await.unwrap();
     assert_eq!(resp.status(), 504);
+}
+
+#[tokio::test]
+async fn forwards_post_with_body() {
+    let upstream = EchoUpstream::start().await;
+    let addr = format!("127.0.0.1:{}", upstream.addr.port());
+    let proxy = TestProxy::start(test_config(vec![("/", &addr)])).await;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(proxy.url("/submit"))
+        .body("hello world")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["method"], "POST");
+    assert_eq!(body["path"], "/submit");
+    assert_eq!(body["body"], "hello world");
+}
+
+#[tokio::test]
+async fn forwards_put_with_json_body() {
+    let upstream = EchoUpstream::start().await;
+    let addr = format!("127.0.0.1:{}", upstream.addr.port());
+    let proxy = TestProxy::start(test_config(vec![("/", &addr)])).await;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .put(proxy.url("/resource/1"))
+        .header("content-type", "application/json")
+        .body(r#"{"name":"test"}"#)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["method"], "PUT");
+    assert_eq!(body["body"], r#"{"name":"test"}"#);
+}
+
+#[tokio::test]
+async fn forwards_delete_request() {
+    let upstream = EchoUpstream::start().await;
+    let addr = format!("127.0.0.1:{}", upstream.addr.port());
+    let proxy = TestProxy::start(test_config(vec![("/", &addr)])).await;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .delete(proxy.url("/resource/1"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["method"], "DELETE");
+    assert_eq!(body["path"], "/resource/1");
 }
