@@ -2,14 +2,49 @@ use bytes::Bytes;
 use http_body_util::Full;
 use hyper::{Request, Response, StatusCode};
 use std::convert::Infallible;
+use std::sync::Arc;
+use tracing::{error, info};
+
+use crate::config::Config;
+use crate::error::ProxyError;
+use crate::proxy;
 
 pub async fn handle(
+    config: Arc<Config>,
     req: Request<hyper::body::Incoming>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    match req.uri().path() {
-        "/health" => Ok(health_response()),
-        _ => Ok(not_found_response()),
+    let method = req.method().clone();
+    let path = req.uri().path().to_string();
+
+    match route(config, req).await {
+        Ok(resp) => {
+            info!(%method, %path, status = %resp.status(), "response");
+            Ok(resp)
+        }
+        Err(e) => {
+            error!(%method, %path, error = %e, "failed");
+            Ok(error_response(e))
+        }
     }
+}
+
+async fn route(
+    config: Arc<Config>,
+    req: Request<hyper::body::Incoming>,
+) -> Result<Response<Full<Bytes>>, ProxyError> {
+    let path = req.uri().path().to_string();
+
+    if path == "/health" {
+        return Ok(health_response());
+    }
+
+    let route = config
+        .routes
+        .iter()
+        .find(|r| path.starts_with(&r.path_prefix))
+        .ok_or_else(|| ProxyError::NoRoute(path))?;
+
+    proxy::forward(req, &route.upstream).await
 }
 
 fn health_response() -> Response<Full<Bytes>> {
@@ -20,10 +55,15 @@ fn health_response() -> Response<Full<Bytes>> {
         .unwrap()
 }
 
-fn not_found_response() -> Response<Full<Bytes>> {
+fn error_response(err: ProxyError) -> Response<Full<Bytes>> {
+    let (status, body) = match &err {
+        ProxyError::NoRoute(_) => (StatusCode::NOT_FOUND, err.to_string()),
+        ProxyError::UpstreamConnect(_) => (StatusCode::BAD_GATEWAY, err.to_string()),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "internal error".into()),
+    };
     Response::builder()
-        .status(StatusCode::NOT_FOUND)
+        .status(status)
         .header("content-type", "text/plain")
-        .body(Full::new(Bytes::from("not found")))
+        .body(Full::new(Bytes::from(body)))
         .unwrap()
 }

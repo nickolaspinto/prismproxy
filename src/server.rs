@@ -21,17 +21,22 @@ pub async fn run_with_listener(
     config: Config,
     shutdown: impl Future<Output = ()>,
 ) -> Result<(), ProxyError> {
-    let _config = Arc::new(config);
+    let config = Arc::new(config);
     tokio::pin!(shutdown);
 
     loop {
         tokio::select! {
             result = listener.accept() => {
                 let (stream, addr) = result?;
+                let config = config.clone();
                 tokio::spawn(async move {
                     let io = TokioIo::new(stream);
+                    let svc = service_fn(move |req| {
+                        let config = config.clone();
+                        async move { handler::handle(config, req).await }
+                    });
                     if let Err(e) = http1::Builder::new()
-                        .serve_connection(io, service_fn(handler::handle))
+                        .serve_connection(io, svc)
                         .await
                     {
                         error!(%addr, "connection error: {e}");
