@@ -15,12 +15,13 @@ pub async fn handle(
     config: Arc<Config>,
     pool: Arc<ConnectionPool>,
     client_addr: SocketAddr,
+    start_time: Arc<std::time::Instant>,
     req: Request<hyper::body::Incoming>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let method = req.method().clone();
     let path = req.uri().path().to_string();
 
-    match route(config, pool, client_addr, req).await {
+    match route(config, pool, client_addr, start_time, req).await {
         Ok(resp) => {
             info!(%method, %path, status = %resp.status(), "response");
             Ok(resp)
@@ -36,12 +37,13 @@ async fn route(
     config: Arc<Config>,
     pool: Arc<ConnectionPool>,
     client_addr: SocketAddr,
+    start_time: Arc<std::time::Instant>,
     req: Request<hyper::body::Incoming>,
 ) -> Result<Response<Full<Bytes>>, ProxyError> {
     let path = req.uri().path().to_string();
 
     if path == "/health" {
-        return Ok(health_response());
+        return Ok(health_response(&start_time));
     }
 
     let route = config
@@ -54,11 +56,17 @@ async fn route(
     proxy::forward(req, &route.upstream, &pool, timeout, client_addr).await
 }
 
-fn health_response() -> Response<Full<Bytes>> {
+fn health_response(start_time: &std::time::Instant) -> Response<Full<Bytes>> {
+    let uptime = start_time.elapsed().as_secs_f64();
+    let body = format!(
+        r#"{{"status":"ok","version":"{}","uptime_secs":{:.1}}}"#,
+        env!("CARGO_PKG_VERSION"),
+        uptime
+    );
     Response::builder()
         .status(StatusCode::OK)
         .header("content-type", "application/json")
-        .body(Full::new(Bytes::from(r#"{"status":"ok"}"#)))
+        .body(Full::new(Bytes::from(body)))
         .unwrap()
 }
 

@@ -3,6 +3,7 @@ use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
 use std::future::Future;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::net::TcpListener;
 use tracing::{error, info};
 
@@ -24,6 +25,7 @@ pub async fn run_with_listener(
 ) -> Result<(), ProxyError> {
     let pool = Arc::new(ConnectionPool::new(config.server.max_idle_connections));
     let config = Arc::new(config);
+    let start_time = Arc::new(Instant::now());
     tokio::pin!(shutdown);
 
     loop {
@@ -32,12 +34,14 @@ pub async fn run_with_listener(
                 let (stream, addr) = result?;
                 let config = config.clone();
                 let pool = pool.clone();
+                let start_time = start_time.clone();
                 tokio::spawn(async move {
                     let io = TokioIo::new(stream);
                     let svc = service_fn(move |req| {
                         let config = config.clone();
                         let pool = pool.clone();
-                        async move { handler::handle(config, pool, addr, req).await }
+                        let start_time = start_time.clone();
+                        async move { handler::handle(config, pool, addr, start_time, req).await }
                     });
                     if let Err(e) = http1::Builder::new()
                         .serve_connection(io, svc)
