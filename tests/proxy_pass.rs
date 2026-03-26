@@ -1,6 +1,7 @@
 mod common;
 use common::{
-    test_config, test_config_with_timeout, EchoUpstream, MockUpstream, SlowUpstream, TestProxy,
+    test_config, test_config_with_timeout, EchoUpstream, HeaderEchoUpstream, MockUpstream,
+    SlowUpstream, TestProxy,
 };
 
 #[tokio::test]
@@ -119,4 +120,16 @@ async fn forwards_delete_request() {
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["method"], "DELETE");
     assert_eq!(body["path"], "/resource/1");
+}
+
+#[tokio::test]
+async fn adds_x_forwarded_for_header() {
+    let upstream = HeaderEchoUpstream::start().await;
+    let addr = format!("127.0.0.1:{}", upstream.addr.port());
+    let proxy = TestProxy::start(test_config(vec![("/", &addr)])).await;
+
+    let resp = reqwest::get(proxy.url("/test")).await.unwrap();
+    let headers: serde_json::Value = resp.json().await.unwrap();
+    assert!(headers["x-forwarded-for"].as_str().is_some());
+    assert!(headers["x-forwarded-proto"].as_str().unwrap().contains("http"));
 }

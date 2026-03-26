@@ -220,3 +220,64 @@ impl EchoUpstream {
         }
     }
 }
+
+pub struct HeaderEchoUpstream {
+    pub addr: SocketAddr,
+    _shutdown: tokio::sync::oneshot::Sender<()>,
+}
+
+impl HeaderEchoUpstream {
+    pub async fn start() -> Self {
+        use http_body_util::BodyExt;
+        use hyper::body::Incoming;
+        use hyper::Request;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
+
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    result = listener.accept() => {
+                        let (stream, _) = result.unwrap();
+                        let io = TokioIo::new(stream);
+                        tokio::spawn(async move {
+                            http1::Builder::new()
+                                .serve_connection(io, service_fn(|req: Request<Incoming>| async move {
+                                    let mut headers_json = String::from("{");
+                                    for (name, value) in req.headers() {
+                                        if headers_json.len() > 1 {
+                                            headers_json.push(',');
+                                        }
+                                        headers_json.push_str(&format!(
+                                            "\"{}\":\"{}\"",
+                                            name.as_str(),
+                                            value.to_str().unwrap_or("")
+                                        ));
+                                    }
+                                    headers_json.push('}');
+
+                                    Ok::<_, Infallible>(
+                                        Response::builder()
+                                            .status(StatusCode::OK)
+                                            .header("content-type", "application/json")
+                                            .body(Full::new(Bytes::from(headers_json)))
+                                            .unwrap(),
+                                    )
+                                }))
+                                .await
+                                .ok();
+                        });
+                    }
+                    _ = &mut rx => break,
+                }
+            }
+        });
+
+        Self {
+            addr,
+            _shutdown: tx,
+        }
+    }
+}

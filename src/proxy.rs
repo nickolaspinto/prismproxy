@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::{Request, Response};
+use std::net::SocketAddr;
 use std::time::Duration;
 
 use crate::error::ProxyError;
@@ -22,8 +23,9 @@ pub async fn forward(
     upstream_addr: &str,
     pool: &ConnectionPool,
     timeout: Duration,
+    client_addr: SocketAddr,
 ) -> Result<Response<Full<Bytes>>, ProxyError> {
-    match tokio::time::timeout(timeout, forward_inner(req, upstream_addr, pool)).await {
+    match tokio::time::timeout(timeout, forward_inner(req, upstream_addr, pool, client_addr)).await {
         Ok(result) => result,
         Err(_) => Err(ProxyError::Timeout(format!(
             "{upstream_addr}: exceeded {timeout:?}"
@@ -35,6 +37,7 @@ async fn forward_inner(
     req: Request<hyper::body::Incoming>,
     upstream_addr: &str,
     pool: &ConnectionPool,
+    client_addr: SocketAddr,
 ) -> Result<Response<Full<Bytes>>, ProxyError> {
     let (mut parts, body) = req.into_parts();
     let body_bytes = body.collect().await.map_err(ProxyError::Hyper)?.to_bytes();
@@ -45,6 +48,12 @@ async fn forward_inner(
     if let Ok(val) = upstream_addr.parse() {
         parts.headers.insert(hyper::header::HOST, val);
     }
+    parts
+        .headers
+        .insert("x-forwarded-for", client_addr.ip().to_string().parse().unwrap());
+    parts
+        .headers
+        .insert("x-forwarded-proto", "http".parse().unwrap());
 
     let upstream_req = Request::from_parts(parts, Full::new(body_bytes));
 

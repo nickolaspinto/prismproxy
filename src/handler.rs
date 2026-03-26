@@ -2,6 +2,7 @@ use bytes::Bytes;
 use http_body_util::Full;
 use hyper::{Request, Response, StatusCode};
 use std::convert::Infallible;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::{error, info};
 
@@ -13,12 +14,13 @@ use crate::proxy;
 pub async fn handle(
     config: Arc<Config>,
     pool: Arc<ConnectionPool>,
+    client_addr: SocketAddr,
     req: Request<hyper::body::Incoming>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let method = req.method().clone();
     let path = req.uri().path().to_string();
 
-    match route(config, pool, req).await {
+    match route(config, pool, client_addr, req).await {
         Ok(resp) => {
             info!(%method, %path, status = %resp.status(), "response");
             Ok(resp)
@@ -33,6 +35,7 @@ pub async fn handle(
 async fn route(
     config: Arc<Config>,
     pool: Arc<ConnectionPool>,
+    client_addr: SocketAddr,
     req: Request<hyper::body::Incoming>,
 ) -> Result<Response<Full<Bytes>>, ProxyError> {
     let path = req.uri().path().to_string();
@@ -48,7 +51,7 @@ async fn route(
         .ok_or_else(|| ProxyError::NoRoute(path))?;
 
     let timeout = std::time::Duration::from_millis(config.server.timeout_ms);
-    proxy::forward(req, &route.upstream, &pool, timeout).await
+    proxy::forward(req, &route.upstream, &pool, timeout, client_addr).await
 }
 
 fn health_response() -> Response<Full<Bytes>> {

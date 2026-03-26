@@ -37,7 +37,7 @@ pub async fn run_with_listener(
                     let svc = service_fn(move |req| {
                         let config = config.clone();
                         let pool = pool.clone();
-                        async move { handler::handle(config, pool, req).await }
+                        async move { handler::handle(config, pool, addr, req).await }
                     });
                     if let Err(e) = http1::Builder::new()
                         .serve_connection(io, svc)
