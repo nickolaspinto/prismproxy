@@ -131,5 +131,8 @@ async fn adds_x_forwarded_for_header() {
     let resp = reqwest::get(proxy.url("/test")).await.unwrap();
     let headers: serde_json::Value = resp.json().await.unwrap();
     assert!(headers["x-forwarded-for"].as_str().is_some());
-    assert!(headers["x-forwarded-proto"].as_str().unwrap().contains("http"));
+    assert!(headers["x-forwarded-proto"]
+        .as_str()
+        .unwrap()
+        .contains("http"));
 }

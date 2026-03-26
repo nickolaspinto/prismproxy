@@ -25,7 +25,12 @@ pub async fn forward(
     timeout: Duration,
     client_addr: SocketAddr,
 ) -> Result<Response<Full<Bytes>>, ProxyError> {
-    match tokio::time::timeout(timeout, forward_inner(req, upstream_addr, pool, client_addr)).await {
+    match tokio::time::timeout(
+        timeout,
+        forward_inner(req, upstream_addr, pool, client_addr),
+    )
+    .await
+    {
         Ok(result) => result,
         Err(_) => Err(ProxyError::Timeout(format!(
             "{upstream_addr}: exceeded {timeout:?}"
@@ -48,9 +53,10 @@ async fn forward_inner(
     if let Ok(val) = upstream_addr.parse() {
         parts.headers.insert(hyper::header::HOST, val);
     }
-    parts
-        .headers
-        .insert("x-forwarded-for", client_addr.ip().to_string().parse().unwrap());
+    parts.headers.insert(
+        "x-forwarded-for",
+        client_addr.ip().to_string().parse().unwrap(),
+    );
     parts
         .headers
         .insert("x-forwarded-proto", "http".parse().unwrap());
