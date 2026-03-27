@@ -61,13 +61,36 @@ async fn forward_inner(
         .headers
         .insert("x-forwarded-proto", "http".parse().unwrap());
 
-    let upstream_req = Request::from_parts(parts, Full::new(body_bytes));
+    let build_request = |parts: &http::request::Parts, body: &Bytes| {
+        let mut builder = Request::builder()
+            .method(parts.method.clone())
+            .uri(parts.uri.clone());
+        for (name, value) in &parts.headers {
+            builder = builder.header(name, value);
+        }
+        builder.body(Full::new(body.clone())).unwrap()
+    };
 
     let mut sender = pool.acquire(upstream_addr).await?;
-    let resp = sender
-        .send_request(upstream_req)
-        .await
-        .map_err(ProxyError::Hyper)?;
+    let upstream_req = build_request(&parts, &body_bytes);
+    let resp = match sender.send_request(upstream_req).await {
+        Ok(resp) => {
+            pool.release(upstream_addr, sender).await;
+            resp
+        }
+        Err(e) => {
+            // Pooled connection may be stale — retry with fresh connection
+            tracing::warn!(upstream = upstream_addr, error = %e, "pooled connection stale, retrying");
+            let upstream_req = build_request(&parts, &body_bytes);
+            let mut fresh = pool.connect_fresh(upstream_addr).await?;
+            let resp = fresh
+                .send_request(upstream_req)
+                .await
+                .map_err(ProxyError::Hyper)?;
+            pool.release(upstream_addr, fresh).await;
+            resp
+        }
+    };
 
     let (resp_parts, resp_body) = resp.into_parts();
     let resp_bytes = resp_body
@@ -75,8 +98,6 @@ async fn forward_inner(
         .await
         .map_err(ProxyError::Hyper)?
         .to_bytes();
-
-    pool.release(upstream_addr, sender).await;
 
     Ok(Response::from_parts(resp_parts, Full::new(resp_bytes)))
 }

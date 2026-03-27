@@ -31,7 +31,7 @@ impl ConnectionPool {
                 }
             }
         }
-        self.connect(addr).await
+        self.connect_fresh(addr).await
     }
 
     pub async fn release(&self, addr: &str, sender: SendRequest<Full<Bytes>>) {
@@ -42,7 +42,7 @@ impl ConnectionPool {
         }
     }
 
-    async fn connect(&self, addr: &str) -> Result<SendRequest<Full<Bytes>>, ProxyError> {
+    pub async fn connect_fresh(&self, addr: &str) -> Result<SendRequest<Full<Bytes>>, ProxyError> {
         let stream = TcpStream::connect(addr)
             .await
             .map_err(|e| ProxyError::UpstreamConnect(format!("{addr}: {e}")))?;
