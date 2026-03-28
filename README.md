@@ -14,10 +14,13 @@ Client ──► TCP Accept ──► HTTP/1.1 Parse ──► Route Match ─�
 
 - Async TCP listener with tokio
 - HTTP/1.1 reverse proxy via hyper
-- TOML-based route configuration
+- TOML-based route configuration with validation
 - Prefix-based route matching (first match wins)
-- Connection pooling for upstreams
-- Health check endpoint (`/health`)
+- Connection pooling with stale connection retry
+- Health check endpoint (`/health`) with version and uptime
+- Upstream request timeouts (504 Gateway Timeout)
+- Graceful shutdown via CTRL+C
+- X-Forwarded-For and X-Forwarded-Proto headers
 - Structured JSON logging via tracing
 - Hop-by-hop header filtering
 
@@ -43,6 +46,7 @@ curl http://localhost:8080/health
 [server]
 listen = "127.0.0.1:8080"
 max_idle_connections = 10
+timeout_ms = 30000
 
 [[routes]]
 path_prefix = "/api"
