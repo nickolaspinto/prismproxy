@@ -19,4 +19,7 @@ pub enum ProxyError {
 
     #[error("timeout: {0}")]
     Timeout(String),
+
+    #[error("plugin: {0}")]
+    Plugin(String),
 }
