@@ -49,8 +49,7 @@ async fn route(
         return Ok(health_response(&start_time));
     }
 
-    let method = req.method().as_str().to_string();
-    if runtime.run_on_request(&method, &path)? {
+    if runtime.run_on_request(req.method().as_str(), &path)? {
         return Ok(blocked_response());
     }
 
