@@ -53,6 +53,7 @@ pub fn test_config(routes: Vec<(&str, &str)>) -> Config {
                 upstream: upstream.to_string(),
             })
             .collect(),
+        plugins: prismproxy::config::PluginsConfig::default(),
     }
 }
 
@@ -70,6 +71,27 @@ pub fn test_config_with_timeout(routes: Vec<(&str, &str)>, timeout_ms: u64) -> C
                 upstream: upstream.to_string(),
             })
             .collect(),
+        plugins: prismproxy::config::PluginsConfig::default(),
+    }
+}
+
+pub fn test_config_with_plugin(routes: Vec<(&str, &str)>, plugin_path: &str) -> Config {
+    Config {
+        server: ServerConfig {
+            listen: "127.0.0.1:0".to_string(),
+            max_idle_connections: 2,
+            timeout_ms: 5000,
+        },
+        routes: routes
+            .into_iter()
+            .map(|(prefix, upstream)| RouteConfig {
+                path_prefix: prefix.to_string(),
+                upstream: upstream.to_string(),
+            })
+            .collect(),
+        plugins: prismproxy::config::PluginsConfig {
+            paths: vec![plugin_path.to_string()],
+        },
     }
 }
 
