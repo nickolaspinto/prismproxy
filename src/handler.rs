@@ -8,12 +8,14 @@ use tracing::{error, info};
 
 use crate::config::Config;
 use crate::error::ProxyError;
+use crate::plugin::PluginRuntime;
 use crate::pool::ConnectionPool;
 use crate::proxy;
 
 pub async fn handle(
     config: Arc<Config>,
     pool: Arc<ConnectionPool>,
+    runtime: Arc<PluginRuntime>,
     client_addr: SocketAddr,
     start_time: Arc<std::time::Instant>,
     req: Request<hyper::body::Incoming>,
@@ -21,7 +23,7 @@ pub async fn handle(
     let method = req.method().clone();
     let path = req.uri().path().to_string();
 
-    match route(config, pool, client_addr, start_time, req).await {
+    match route(config, pool, runtime, client_addr, start_time, req).await {
         Ok(resp) => {
             info!(%method, %path, status = %resp.status(), "response");
             Ok(resp)
@@ -36,6 +38,7 @@ pub async fn handle(
 async fn route(
     config: Arc<Config>,
     pool: Arc<ConnectionPool>,
+    runtime: Arc<PluginRuntime>,
     client_addr: SocketAddr,
     start_time: Arc<std::time::Instant>,
     req: Request<hyper::body::Incoming>,
@@ -44,6 +47,11 @@ async fn route(
 
     if path == "/health" {
         return Ok(health_response(&start_time));
+    }
+
+    let method = req.method().as_str().to_string();
+    if runtime.run_on_request(&method, &path)? {
+        return Ok(blocked_response());
     }
 
     let route = config
@@ -67,6 +75,14 @@ fn health_response(start_time: &std::time::Instant) -> Response<Full<Bytes>> {
         .status(StatusCode::OK)
         .header("content-type", "application/json")
         .body(Full::new(Bytes::from(body)))
+        .unwrap()
+}
+
+fn blocked_response() -> Response<Full<Bytes>> {
+    Response::builder()
+        .status(StatusCode::FORBIDDEN)
+        .header("content-type", "text/plain")
+        .body(Full::new(Bytes::from("403 Forbidden\n")))
         .unwrap()
 }
 

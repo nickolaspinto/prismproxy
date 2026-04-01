@@ -10,6 +10,7 @@ use tracing::{error, info};
 use crate::config::Config;
 use crate::error::ProxyError;
 use crate::handler;
+use crate::plugin::PluginRuntime;
 use crate::pool::ConnectionPool;
 
 pub async fn run(config: Config) -> Result<(), ProxyError> {
@@ -24,6 +25,13 @@ pub async fn run_with_listener(
     shutdown: impl Future<Output = ()>,
 ) -> Result<(), ProxyError> {
     let pool = Arc::new(ConnectionPool::new(config.server.max_idle_connections));
+
+    let mut runtime = PluginRuntime::new()?;
+    for path in &config.plugins.paths {
+        runtime.load(path)?;
+    }
+    let runtime = Arc::new(runtime);
+
     let config = Arc::new(config);
     let start_time = Arc::new(Instant::now());
     tokio::pin!(shutdown);
@@ -34,14 +42,16 @@ pub async fn run_with_listener(
                 let (stream, addr) = result?;
                 let config = config.clone();
                 let pool = pool.clone();
+                let runtime = runtime.clone();
                 let start_time = start_time.clone();
                 tokio::spawn(async move {
                     let io = TokioIo::new(stream);
                     let svc = service_fn(move |req| {
                         let config = config.clone();
                         let pool = pool.clone();
+                        let runtime = runtime.clone();
                         let start_time = start_time.clone();
-                        async move { handler::handle(config, pool, addr, start_time, req).await }
+                        async move { handler::handle(config, pool, runtime, addr, start_time, req).await }
                     });
                     if let Err(e) = http1::Builder::new()
                         .serve_connection(io, svc)
