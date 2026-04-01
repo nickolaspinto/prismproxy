@@ -23,11 +23,10 @@ impl Plugin {
         let module = Module::from_file(engine, path)
             .map_err(|e| ProxyError::Plugin(format!("compile '{}': {e}", path.display())))?;
 
-        info!(plugin = %name, "compiled plugin");
         Ok(Self { name, module })
     }
 
-    pub fn from_module(name: impl Into<String>, module: Module) -> Self {
+    pub(crate) fn from_module(name: impl Into<String>, module: Module) -> Self {
         Self { name: name.into(), module }
     }
 
@@ -85,6 +84,13 @@ impl PluginRuntime {
         let path_bytes = path.as_bytes();
 
         for plugin in &self.plugins {
+            if method_bytes.len() > 256 {
+                return Err(ProxyError::Plugin(format!(
+                    "'{}': method too long ({} bytes, max 256)",
+                    plugin.name(),
+                    method_bytes.len()
+                )));
+            }
             let mut store = Store::new(&self.engine, ());
             let instance = self
                 .linker
@@ -222,5 +228,98 @@ mod tests {
         assert!(runtime.run_on_request("GET", "/blockme").unwrap());
         assert!(!runtime.run_on_request("GET", "/other").unwrap());
         assert!(!runtime.run_on_request("GET", "/").unwrap());
+    }
+
+    #[test]
+    fn missing_memory_export_returns_error() {
+        // A module without a memory export
+        let no_memory_wat = r#"
+(module
+  (func (export "on_request") (param i32 i32 i32 i32) (result i32)
+    i32.const 0))
+"#;
+        let mut runtime = PluginRuntime::new().unwrap();
+        let module = Module::new(runtime.engine(), no_memory_wat.as_bytes()).unwrap();
+        runtime.push_module("no-memory", module);
+
+        let result = runtime.run_on_request("GET", "/test");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("missing 'memory' export"));
+    }
+
+    #[test]
+    fn missing_on_request_export_returns_error() {
+        // A module with memory but no on_request export
+        let no_fn_wat = r#"
+(module
+  (memory (export "memory") 1))
+"#;
+        let mut runtime = PluginRuntime::new().unwrap();
+        let module = Module::new(runtime.engine(), no_fn_wat.as_bytes()).unwrap();
+        runtime.push_module("no-fn", module);
+
+        let result = runtime.run_on_request("GET", "/test");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("missing 'on_request' export"));
+    }
+
+    #[test]
+    fn first_block_wins_ordering() {
+        let pass_wat = r#"
+(module
+  (memory (export "memory") 1)
+  (func (export "on_request") (param i32 i32 i32 i32) (result i32)
+    i32.const 0))
+"#;
+        let block_wat = r#"
+(module
+  (memory (export "memory") 1)
+  (func (export "on_request") (param i32 i32 i32 i32) (result i32)
+    i32.const 1))
+"#;
+
+        // [block-all, pass-all] — should block (first plugin blocks)
+        let mut runtime1 = PluginRuntime::new().unwrap();
+        runtime1.push_module("block", Module::new(runtime1.engine(), block_wat.as_bytes()).unwrap());
+        runtime1.push_module("pass", Module::new(runtime1.engine(), pass_wat.as_bytes()).unwrap());
+        assert!(runtime1.run_on_request("GET", "/test").unwrap());
+
+        // [pass-all, block-all] — should also block (second plugin blocks, first passes)
+        let mut runtime2 = PluginRuntime::new().unwrap();
+        runtime2.push_module("pass", Module::new(runtime2.engine(), pass_wat.as_bytes()).unwrap());
+        runtime2.push_module("block", Module::new(runtime2.engine(), block_wat.as_bytes()).unwrap());
+        assert!(runtime2.run_on_request("GET", "/test").unwrap());
+
+        // [pass-all, pass-all] — should pass
+        let mut runtime3 = PluginRuntime::new().unwrap();
+        runtime3.push_module("pass1", Module::new(runtime3.engine(), pass_wat.as_bytes()).unwrap());
+        runtime3.push_module("pass2", Module::new(runtime3.engine(), pass_wat.as_bytes()).unwrap());
+        assert!(!runtime3.run_on_request("GET", "/test").unwrap());
+    }
+
+    #[test]
+    fn method_bytes_written_to_plugin_memory() {
+        // Plugin that blocks if method starts with 'G' (0x47 = 71)
+        let method_check_wat = r#"
+(module
+  (memory (export "memory") 1)
+  (func (export "on_request")
+    (param $mp i32) (param $ml i32) (param $pp i32) (param $pl i32)
+    (result i32)
+    ;; Block if first byte of method is 'G' = 71
+    (if (i32.eqz (local.get $ml)) (then (return (i32.const 0))))
+    (if (i32.eq (i32.load8_u (local.get $mp)) (i32.const 71))
+      (then (return (i32.const 1))))
+    i32.const 0)
+)
+"#;
+        let mut runtime = PluginRuntime::new().unwrap();
+        let module = Module::new(runtime.engine(), method_check_wat.as_bytes()).unwrap();
+        runtime.push_module("method-check", module);
+
+        // GET starts with 'G' — should block
+        assert!(runtime.run_on_request("GET", "/test").unwrap());
+        // POST does not start with 'G' — should pass
+        assert!(!runtime.run_on_request("POST", "/test").unwrap());
     }
 }
