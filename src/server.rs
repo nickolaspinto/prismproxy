@@ -26,11 +26,7 @@ pub async fn run_with_listener(
 ) -> Result<(), ProxyError> {
     let pool = Arc::new(ConnectionPool::new(config.server.max_idle_connections));
 
-    let mut runtime = PluginRuntime::new()?;
-    for path in &config.plugins.paths {
-        runtime.load(path)?;
-    }
-    let runtime = Arc::new(runtime);
+    let runtime = Arc::new(PluginRuntime::new()?);
 
     let config = Arc::new(config);
     let start_time = Arc::new(Instant::now());
