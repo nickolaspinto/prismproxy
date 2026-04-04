@@ -100,7 +100,7 @@ upstream = "127.0.0.1:3000"
 6. Shut down challenge server
 7. Generate RSA-2048 key pair + CSR via `rcgen`
 8. Finalize order, download cert chain PEM
-9. Write `{cache_dir}/cert.pem` and `{cache_dir}/key.pem`
+9. Write cert files atomically (see Certificate Write Atomicity below)
 10. Return `(cert_pem, key_pem)`
 
 `renewal_loop()` in `src/acme.rs`:
@@ -111,6 +111,21 @@ upstream = "127.0.0.1:3000"
 - On error: `warn!` + keep current state (same lenient policy as config hot reload)
 
 Cert expiry parsing uses `rcgen`'s or `rustls`'s certificate parsing — no additional crate needed.
+
+---
+
+## Certificate Write Atomicity
+
+Writing `cert.pem` then `key.pem` sequentially creates a race window: a crash between the two writes leaves a mismatched pair, causing startup failure. Concurrent renewal attempts across instances can also race ACME orders into Let's Encrypt's duplicate-cert rate limit.
+
+`provision()` uses a two-phase write:
+
+1. **Lock:** create `{cache_dir}/.renewing` before any ACME network calls. If the file already exists, abort — another process is already renewing.
+2. **Write to temps:** write `{cache_dir}/cert.pem.tmp` and `{cache_dir}/key.pem.tmp`
+3. **Atomic rename:** `fs::rename("cert.pem.tmp", "cert.pem")` then `fs::rename("key.pem.tmp", "key.pem")` — on POSIX, rename is atomic within the same filesystem
+4. **Unlock:** remove `.renewing`
+
+If `provision()` returns `Err`, the lockfile is removed and `.tmp` files are deleted. The previous `cert.pem` + `key.pem` are untouched.
 
 ---
 
