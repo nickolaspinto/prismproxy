@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper::server::conn::http1;
@@ -298,7 +300,6 @@ pub struct HeaderEchoUpstream {
 
 impl HeaderEchoUpstream {
     pub async fn start() -> Self {
-        use http_body_util::BodyExt;
         use hyper::body::Incoming;
         use hyper::Request;
 
