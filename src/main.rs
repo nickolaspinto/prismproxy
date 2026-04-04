@@ -16,12 +16,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = config::Config::from_file(&config_path)?;
     config.validate()?;
-    tracing::info!(listen = %config.server.listen, routes = config.routes.len(), "loaded config");
+    let listen = config.server.listen.clone();
+    tracing::info!(listen = %listen, routes = config.routes.len(), "loaded config");
 
-    let listener = TcpListener::bind(&config.server.listen).await?;
-    tracing::info!("listening on {}", config.server.listen);
+    let listener = TcpListener::bind(&listen).await?;
+    tracing::info!("listening on {}", listen);
 
-    server::run_with_listener(listener, config, async {
+    server::run_with_listener_hot(listener, &config_path, async {
         tokio::signal::ctrl_c().await.ok();
     })
     .await?;

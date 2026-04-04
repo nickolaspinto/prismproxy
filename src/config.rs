@@ -8,8 +8,6 @@ pub struct Config {
     pub server: ServerConfig,
     #[serde(default)]
     pub routes: Vec<RouteConfig>,
-    #[serde(default)]
-    pub plugins: PluginsConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -33,13 +31,10 @@ fn default_timeout_ms() -> u64 {
 pub struct RouteConfig {
     pub path_prefix: String,
     pub upstream: String,
+    #[serde(default)]
+    pub plugins: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct PluginsConfig {
-    #[serde(default)]
-    pub paths: Vec<String>,
-}
 
 impl Config {
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, ProxyError> {
@@ -133,23 +128,32 @@ upstream = "127.0.0.1:8000"
     }
 
     #[test]
-    fn plugins_config_parses() {
+    fn route_with_plugins_parses() {
         let toml = r#"
 [server]
 listen = "127.0.0.1:8080"
 
-[plugins]
-paths = ["./plugins/auth.wasm", "./plugins/rate.wasm"]
+[[routes]]
+path_prefix = "/api"
+upstream = "127.0.0.1:3000"
+plugins = ["./plugins/auth.wasm", "./plugins/rate.wasm"]
 "#;
         let cfg = Config::parse(toml).unwrap();
-        assert_eq!(cfg.plugins.paths.len(), 2);
-        assert_eq!(cfg.plugins.paths[0], "./plugins/auth.wasm");
+        assert_eq!(cfg.routes[0].plugins.len(), 2);
+        assert_eq!(cfg.routes[0].plugins[0], "./plugins/auth.wasm");
     }
 
     #[test]
-    fn plugins_config_defaults_to_empty() {
-        let toml = "[server]\nlisten = \"0.0.0.0:8080\"";
+    fn route_without_plugins_defaults_empty() {
+        let toml = r#"
+[server]
+listen = "127.0.0.1:8080"
+
+[[routes]]
+path_prefix = "/"
+upstream = "127.0.0.1:8000"
+"#;
         let cfg = Config::parse(toml).unwrap();
-        assert!(cfg.plugins.paths.is_empty());
+        assert!(cfg.routes[0].plugins.is_empty());
     }
 }
