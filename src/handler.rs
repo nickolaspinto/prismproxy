@@ -56,11 +56,21 @@ async fn route(
         .find(|rs| path.starts_with(&rs.route.path_prefix))
         .ok_or_else(|| ProxyError::NoRoute(path.clone()))?;
 
-    if route_state.runtime.run_on_request(req.method().as_str(), &path)? {
+    if route_state
+        .runtime
+        .run_on_request(req.method().as_str(), &path)?
+    {
         return Ok(blocked_response());
     }
 
-    proxy::forward(req, &route_state.route.upstream, &pool, timeout, client_addr).await
+    proxy::forward(
+        req,
+        &route_state.route.upstream,
+        &pool,
+        timeout,
+        client_addr,
+    )
+    .await
 }
 
 fn health_response(start_time: &std::time::Instant) -> Response<Full<Bytes>> {

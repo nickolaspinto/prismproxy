@@ -27,7 +27,10 @@ impl Plugin {
     }
 
     pub(crate) fn from_module(name: impl Into<String>, module: Module) -> Self {
-        Self { name: name.into(), module }
+        Self {
+            name: name.into(),
+            module,
+        }
     }
 
     pub fn name(&self) -> &str {
@@ -51,7 +54,11 @@ impl PluginRuntime {
         let engine = Engine::default();
         let linker = Linker::new(&engine);
         info!("WASM plugin runtime initialized");
-        Ok(Self { engine, linker, plugins: Vec::new() })
+        Ok(Self {
+            engine,
+            linker,
+            plugins: Vec::new(),
+        })
     }
 
     pub fn engine(&self) -> &Engine {
@@ -95,15 +102,11 @@ impl PluginRuntime {
             let instance = self
                 .linker
                 .instantiate(&mut store, plugin.module())
-                .map_err(|e| {
-                    ProxyError::Plugin(format!("instantiate '{}': {e}", plugin.name()))
-                })?;
+                .map_err(|e| ProxyError::Plugin(format!("instantiate '{}': {e}", plugin.name())))?;
 
-            let memory = instance
-                .get_memory(&mut store, "memory")
-                .ok_or_else(|| {
-                    ProxyError::Plugin(format!("'{}' missing 'memory' export", plugin.name()))
-                })?;
+            let memory = instance.get_memory(&mut store, "memory").ok_or_else(|| {
+                ProxyError::Plugin(format!("'{}' missing 'memory' export", plugin.name()))
+            })?;
 
             // Host layout: method at offset 0, path at offset 256.
             memory.write(&mut store, 0, method_bytes).map_err(|e| {
@@ -125,12 +128,7 @@ impl PluginRuntime {
             let result = on_request
                 .call(
                     &mut store,
-                    (
-                        0,
-                        method_bytes.len() as i32,
-                        256,
-                        path_bytes.len() as i32,
-                    ),
+                    (0, method_bytes.len() as i32, 256, path_bytes.len() as i32),
                 )
                 .map_err(|e| {
                     ProxyError::Plugin(format!("'{}' on_request trap: {e}", plugin.name()))
@@ -244,7 +242,10 @@ mod tests {
 
         let result = runtime.run_on_request("GET", "/test");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("missing 'memory' export"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("missing 'memory' export"));
     }
 
     #[test]
@@ -260,7 +261,10 @@ mod tests {
 
         let result = runtime.run_on_request("GET", "/test");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("missing 'on_request' export"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("missing 'on_request' export"));
     }
 
     #[test]
@@ -280,20 +284,38 @@ mod tests {
 
         // [block-all, pass-all] — should block (first plugin blocks)
         let mut runtime1 = PluginRuntime::new().unwrap();
-        runtime1.push_module("block", Module::new(runtime1.engine(), block_wat.as_bytes()).unwrap());
-        runtime1.push_module("pass", Module::new(runtime1.engine(), pass_wat.as_bytes()).unwrap());
+        runtime1.push_module(
+            "block",
+            Module::new(runtime1.engine(), block_wat.as_bytes()).unwrap(),
+        );
+        runtime1.push_module(
+            "pass",
+            Module::new(runtime1.engine(), pass_wat.as_bytes()).unwrap(),
+        );
         assert!(runtime1.run_on_request("GET", "/test").unwrap());
 
         // [pass-all, block-all] — should also block (second plugin blocks, first passes)
         let mut runtime2 = PluginRuntime::new().unwrap();
-        runtime2.push_module("pass", Module::new(runtime2.engine(), pass_wat.as_bytes()).unwrap());
-        runtime2.push_module("block", Module::new(runtime2.engine(), block_wat.as_bytes()).unwrap());
+        runtime2.push_module(
+            "pass",
+            Module::new(runtime2.engine(), pass_wat.as_bytes()).unwrap(),
+        );
+        runtime2.push_module(
+            "block",
+            Module::new(runtime2.engine(), block_wat.as_bytes()).unwrap(),
+        );
         assert!(runtime2.run_on_request("GET", "/test").unwrap());
 
         // [pass-all, pass-all] — should pass
         let mut runtime3 = PluginRuntime::new().unwrap();
-        runtime3.push_module("pass1", Module::new(runtime3.engine(), pass_wat.as_bytes()).unwrap());
-        runtime3.push_module("pass2", Module::new(runtime3.engine(), pass_wat.as_bytes()).unwrap());
+        runtime3.push_module(
+            "pass1",
+            Module::new(runtime3.engine(), pass_wat.as_bytes()).unwrap(),
+        );
+        runtime3.push_module(
+            "pass2",
+            Module::new(runtime3.engine(), pass_wat.as_bytes()).unwrap(),
+        );
         assert!(!runtime3.run_on_request("GET", "/test").unwrap());
     }
 

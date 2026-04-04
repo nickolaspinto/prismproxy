@@ -8,9 +8,9 @@ const BLOCK_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/bl
 async fn route_with_pass_all_plugin_passes() {
     let upstream = MockUpstream::start(200, "ok").await;
     let addr = format!("127.0.0.1:{}", upstream.addr.port());
-    let proxy = common::TestProxy::start(test_config_with_routes(vec![
-        test_route_with_plugin("/", &addr, PASS_ALL),
-    ]))
+    let proxy = common::TestProxy::start(test_config_with_routes(vec![test_route_with_plugin(
+        "/", &addr, PASS_ALL,
+    )]))
     .await;
 
     let resp = reqwest::get(proxy.url("/anything")).await.unwrap();
@@ -21,9 +21,9 @@ async fn route_with_pass_all_plugin_passes() {
 async fn route_with_block_path_plugin_returns_403() {
     let upstream = MockUpstream::start(200, "ok").await;
     let addr = format!("127.0.0.1:{}", upstream.addr.port());
-    let proxy = common::TestProxy::start(test_config_with_routes(vec![
-        test_route_with_plugin("/", &addr, BLOCK_PATH),
-    ]))
+    let proxy = common::TestProxy::start(test_config_with_routes(vec![test_route_with_plugin(
+        "/", &addr, BLOCK_PATH,
+    )]))
     .await;
 
     let resp = reqwest::get(proxy.url("/blocked")).await.unwrap();

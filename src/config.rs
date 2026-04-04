@@ -35,7 +35,6 @@ pub struct RouteConfig {
     pub plugins: Vec<String>,
 }
 
-
 impl Config {
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, ProxyError> {
         let content = std::fs::read_to_string(path.as_ref())
