@@ -98,7 +98,11 @@ async fn reload_invalid_config_keeps_previous_state() {
 
     // Proxy still serves with old config
     let resp = reqwest::get(proxy.url("/anything")).await.unwrap();
-    assert_eq!(resp.status(), 200, "should keep serving after invalid config written");
+    assert_eq!(
+        resp.status(),
+        200,
+        "should keep serving after invalid config written"
+    );
 }
 
 #[tokio::test]
@@ -111,7 +115,11 @@ async fn reload_changes_plugin_chain() {
     sleep(Duration::from_millis(100)).await;
 
     let resp = reqwest::get(proxy.url("/blocked")).await.unwrap();
-    assert_eq!(resp.status(), 200, "/blocked should pass with pass_all plugin");
+    assert_eq!(
+        resp.status(),
+        200,
+        "/blocked should pass with pass_all plugin"
+    );
 
     // Reload with block_path plugin
     proxy.write_config(&config_toml_with_plugin(&addr, BLOCK_PATH));
@@ -119,5 +127,9 @@ async fn reload_changes_plugin_chain() {
 
     // /blocked should now be 403
     let resp = reqwest::get(proxy.url("/blocked")).await.unwrap();
-    assert_eq!(resp.status(), 403, "/blocked should be 403 after reload with block_path plugin");
+    assert_eq!(
+        resp.status(),
+        403,
+        "/blocked should be 403 after reload with block_path plugin"
+    );
 }
