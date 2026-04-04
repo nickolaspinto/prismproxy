@@ -1,3 +1,4 @@
+use arc_swap::ArcSwap;
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper::{Request, Response, StatusCode};
@@ -6,16 +7,14 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::{error, info};
 
-use crate::config::Config;
 use crate::error::ProxyError;
-use crate::plugin::PluginRuntime;
 use crate::pool::ConnectionPool;
 use crate::proxy;
+use crate::state::AppState;
 
 pub async fn handle(
-    config: Arc<Config>,
+    app_state: Arc<ArcSwap<AppState>>,
     pool: Arc<ConnectionPool>,
-    runtime: Arc<PluginRuntime>,
     client_addr: SocketAddr,
     start_time: Arc<std::time::Instant>,
     req: Request<hyper::body::Incoming>,
@@ -23,7 +22,7 @@ pub async fn handle(
     let method = req.method().clone();
     let path = req.uri().path().to_string();
 
-    match route(config, pool, runtime, client_addr, start_time, req).await {
+    match route(app_state, pool, client_addr, start_time, req).await {
         Ok(resp) => {
             info!(%method, %path, status = %resp.status(), "response");
             Ok(resp)
@@ -36,9 +35,8 @@ pub async fn handle(
 }
 
 async fn route(
-    config: Arc<Config>,
+    app_state: Arc<ArcSwap<AppState>>,
     pool: Arc<ConnectionPool>,
-    runtime: Arc<PluginRuntime>,
     client_addr: SocketAddr,
     start_time: Arc<std::time::Instant>,
     req: Request<hyper::body::Incoming>,
@@ -49,18 +47,20 @@ async fn route(
         return Ok(health_response(&start_time));
     }
 
-    if runtime.run_on_request(req.method().as_str(), &path)? {
+    let state = app_state.load_full();
+    let timeout = std::time::Duration::from_millis(state.timeout_ms);
+
+    let route_state = state
+        .routes
+        .iter()
+        .find(|rs| path.starts_with(&rs.route.path_prefix))
+        .ok_or_else(|| ProxyError::NoRoute(path.clone()))?;
+
+    if route_state.runtime.run_on_request(req.method().as_str(), &path)? {
         return Ok(blocked_response());
     }
 
-    let route = config
-        .routes
-        .iter()
-        .find(|r| path.starts_with(&r.path_prefix))
-        .ok_or_else(|| ProxyError::NoRoute(path))?;
-
-    let timeout = std::time::Duration::from_millis(config.server.timeout_ms);
-    proxy::forward(req, &route.upstream, &pool, timeout, client_addr).await
+    proxy::forward(req, &route_state.route.upstream, &pool, timeout, client_addr).await
 }
 
 fn health_response(start_time: &std::time::Instant) -> Response<Full<Bytes>> {
