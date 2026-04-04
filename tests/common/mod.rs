@@ -7,6 +7,7 @@ use hyper_util::rt::TokioIo;
 use prismproxy::config::{Config, RouteConfig, ServerConfig};
 use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use tokio::net::TcpListener;
 
 pub struct TestProxy {
@@ -39,6 +40,52 @@ impl TestProxy {
     }
 }
 
+/// Proxy that watches a config file on disk and hot-reloads on change.
+pub struct TestProxyHot {
+    pub addr: SocketAddr,
+    pub config_path: PathBuf,
+    _shutdown: tokio::sync::oneshot::Sender<()>,
+    _dir: tempfile::TempDir,
+}
+
+impl TestProxyHot {
+    pub async fn start(initial_toml: &str) -> Self {
+        let dir = tempfile::TempDir::new().unwrap();
+        let config_path = dir.path().join("config.toml");
+        std::fs::write(&config_path, initial_toml).unwrap();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let path = config_path.clone();
+
+        tokio::spawn(async move {
+            prismproxy::server::run_with_listener_hot(listener, path, async {
+                rx.await.ok();
+            })
+            .await
+            .unwrap();
+        });
+
+        Self {
+            addr,
+            config_path,
+            _shutdown: tx,
+            _dir: dir,
+        }
+    }
+
+    /// Overwrite the config file on disk. The proxy detects the change and reloads within ~1s.
+    pub fn write_config(&self, toml: &str) {
+        std::fs::write(&self.config_path, toml).unwrap();
+    }
+
+    pub fn url(&self, path: &str) -> String {
+        format!("http://{}{}", self.addr, path)
+    }
+}
+
+/// Build a Config with no plugins on any route.
 pub fn test_config(routes: Vec<(&str, &str)>) -> Config {
     Config {
         server: ServerConfig {
@@ -51,9 +98,9 @@ pub fn test_config(routes: Vec<(&str, &str)>) -> Config {
             .map(|(prefix, upstream)| RouteConfig {
                 path_prefix: prefix.to_string(),
                 upstream: upstream.to_string(),
+                plugins: vec![],
             })
             .collect(),
-        plugins: prismproxy::config::PluginsConfig::default(),
     }
 }
 
@@ -69,29 +116,30 @@ pub fn test_config_with_timeout(routes: Vec<(&str, &str)>, timeout_ms: u64) -> C
             .map(|(prefix, upstream)| RouteConfig {
                 path_prefix: prefix.to_string(),
                 upstream: upstream.to_string(),
+                plugins: vec![],
             })
             .collect(),
-        plugins: prismproxy::config::PluginsConfig::default(),
     }
 }
 
-pub fn test_config_with_plugin(routes: Vec<(&str, &str)>, plugin_path: &str) -> Config {
+/// Build a RouteConfig with a specific plugin (for per-route plugin tests).
+pub fn test_route_with_plugin(prefix: &str, upstream: &str, plugin_path: &str) -> RouteConfig {
+    RouteConfig {
+        path_prefix: prefix.to_string(),
+        upstream: upstream.to_string(),
+        plugins: vec![plugin_path.to_string()],
+    }
+}
+
+/// Build a Config from specific RouteConfigs (allows mixing routes with/without plugins).
+pub fn test_config_with_routes(routes: Vec<RouteConfig>) -> Config {
     Config {
         server: ServerConfig {
             listen: "127.0.0.1:0".to_string(),
             max_idle_connections: 2,
             timeout_ms: 5000,
         },
-        routes: routes
-            .into_iter()
-            .map(|(prefix, upstream)| RouteConfig {
-                path_prefix: prefix.to_string(),
-                upstream: upstream.to_string(),
-            })
-            .collect(),
-        plugins: prismproxy::config::PluginsConfig {
-            paths: vec![plugin_path.to_string()],
-        },
+        routes,
     }
 }
 
