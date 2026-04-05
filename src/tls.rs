@@ -18,19 +18,17 @@ pub fn build_tls_state(
     cert_pem: &str,
     key_pem: &str,
 ) -> Result<TlsState, ProxyError> {
-    let certs: Vec<CertificateDer<'static>> =
-        rustls_pemfile::certs(&mut cert_pem.as_bytes())
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| ProxyError::Tls(format!("parse cert chain: {e}")))?;
+    let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_pem.as_bytes())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| ProxyError::Tls(format!("parse cert chain: {e}")))?;
 
     if certs.is_empty() {
         return Err(ProxyError::Tls("no certificates found in PEM".to_string()));
     }
 
-    let key: PrivateKeyDer<'static> =
-        rustls_pemfile::private_key(&mut key_pem.as_bytes())
-            .map_err(|e| ProxyError::Tls(format!("parse private key: {e}")))?
-            .ok_or_else(|| ProxyError::Tls("no private key found in PEM".to_string()))?;
+    let key: PrivateKeyDer<'static> = rustls_pemfile::private_key(&mut key_pem.as_bytes())
+        .map_err(|e| ProxyError::Tls(format!("parse private key: {e}")))?
+        .ok_or_else(|| ProxyError::Tls("no private key found in PEM".to_string()))?;
 
     let mut server_config = ServerConfig::builder()
         .with_no_client_auth()
@@ -60,8 +58,7 @@ mod tests {
     }
 
     fn generate_self_signed() -> (String, String) {
-        let params =
-            rcgen::CertificateParams::new(vec!["localhost".to_string()]).unwrap();
+        let params = rcgen::CertificateParams::new(vec!["localhost".to_string()]).unwrap();
         let key_pair = rcgen::KeyPair::generate().unwrap();
         let cert = params.self_signed(&key_pair).unwrap();
         (cert.pem(), key_pair.serialize_pem())

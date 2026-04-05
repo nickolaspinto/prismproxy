@@ -11,9 +11,7 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use instant_acme::{
-    Account, ChallengeType, Identifier, NewAccount, NewOrder, OrderStatus,
-};
+use instant_acme::{Account, ChallengeType, Identifier, NewAccount, NewOrder, OrderStatus};
 use tokio::net::TcpListener;
 use tracing::{error, info, warn};
 
@@ -162,7 +160,9 @@ async fn provision_inner(
             _ => {}
         }
         if tokio::time::Instant::now() > deadline {
-            return Err(ProxyError::Acme("ACME order timed out after 120s".to_string()));
+            return Err(ProxyError::Acme(
+                "ACME order timed out after 120s".to_string(),
+            ));
         }
     }
 
@@ -172,8 +172,8 @@ async fn provision_inner(
     // Generate key pair and CSR
     let params = rcgen::CertificateParams::new(tls_config.domains.clone())
         .map_err(|e| ProxyError::Acme(format!("cert params: {e}")))?;
-    let key_pair = rcgen::KeyPair::generate()
-        .map_err(|e| ProxyError::Acme(format!("key generation: {e}")))?;
+    let key_pair =
+        rcgen::KeyPair::generate().map_err(|e| ProxyError::Acme(format!("key generation: {e}")))?;
     let csr = params
         .serialize_request(&key_pair)
         .map_err(|e| ProxyError::Acme(format!("serialize CSR: {e}")))?;

@@ -61,9 +61,7 @@ async fn forward_inner(
     );
     parts.headers.insert(
         "x-forwarded-proto",
-        if is_tls { "https" } else { "http" }
-            .parse()
-            .unwrap(),
+        if is_tls { "https" } else { "http" }.parse().unwrap(),
     );
 
     let build_request = |parts: &http::request::Parts, body: &Bytes| {
