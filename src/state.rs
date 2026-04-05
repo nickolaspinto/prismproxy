@@ -35,6 +35,7 @@ mod tests {
             listen: "127.0.0.1:8080".to_string(),
             max_idle_connections: 10,
             timeout_ms: 5000,
+            http_challenge_listen: None,
         }
     }
 
@@ -54,6 +55,7 @@ mod tests {
                     plugins: vec![],
                 },
             ],
+            tls: None,
         };
         let state = build_state(config).unwrap();
         assert_eq!(state.routes.len(), 2);
@@ -70,6 +72,7 @@ mod tests {
                 upstream: "127.0.0.1:3000".to_string(),
                 plugins: vec!["nonexistent.wasm".to_string()],
             }],
+            tls: None,
         };
         let result = build_state(config);
         assert!(result.is_err());

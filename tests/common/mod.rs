@@ -94,6 +94,7 @@ pub fn test_config(routes: Vec<(&str, &str)>) -> Config {
             listen: "127.0.0.1:0".to_string(),
             max_idle_connections: 2,
             timeout_ms: 5000,
+            http_challenge_listen: None,
         },
         routes: routes
             .into_iter()
@@ -103,6 +104,7 @@ pub fn test_config(routes: Vec<(&str, &str)>) -> Config {
                 plugins: vec![],
             })
             .collect(),
+        tls: None,
     }
 }
 
@@ -112,6 +114,7 @@ pub fn test_config_with_timeout(routes: Vec<(&str, &str)>, timeout_ms: u64) -> C
             listen: "127.0.0.1:0".to_string(),
             max_idle_connections: 2,
             timeout_ms,
+            http_challenge_listen: None,
         },
         routes: routes
             .into_iter()
@@ -121,6 +124,7 @@ pub fn test_config_with_timeout(routes: Vec<(&str, &str)>, timeout_ms: u64) -> C
                 plugins: vec![],
             })
             .collect(),
+        tls: None,
     }
 }
 
@@ -140,8 +144,10 @@ pub fn test_config_with_routes(routes: Vec<RouteConfig>) -> Config {
             listen: "127.0.0.1:0".to_string(),
             max_idle_connections: 2,
             timeout_ms: 5000,
+            http_challenge_listen: None,
         },
         routes,
+        tls: None,
     }
 }
 
