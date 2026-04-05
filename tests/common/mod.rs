@@ -89,11 +89,9 @@ impl TestProxyHot {
 
 /// Generate a self-signed cert + key PEM valid for 127.0.0.1 and localhost.
 pub fn generate_self_signed_cert() -> (String, String) {
-    let params = rcgen::CertificateParams::new(vec![
-        "127.0.0.1".to_string(),
-        "localhost".to_string(),
-    ])
-    .unwrap();
+    let params =
+        rcgen::CertificateParams::new(vec!["127.0.0.1".to_string(), "localhost".to_string()])
+            .unwrap();
     let key_pair = rcgen::KeyPair::generate().unwrap();
     let cert = params.self_signed(&key_pair).unwrap();
     (cert.pem(), key_pair.serialize_pem())
