@@ -24,10 +24,11 @@ pub async fn forward(
     pool: &ConnectionPool,
     timeout: Duration,
     client_addr: SocketAddr,
+    is_tls: bool,
 ) -> Result<Response<Full<Bytes>>, ProxyError> {
     match tokio::time::timeout(
         timeout,
-        forward_inner(req, upstream_addr, pool, client_addr),
+        forward_inner(req, upstream_addr, pool, client_addr, is_tls),
     )
     .await
     {
@@ -43,6 +44,7 @@ async fn forward_inner(
     upstream_addr: &str,
     pool: &ConnectionPool,
     client_addr: SocketAddr,
+    is_tls: bool,
 ) -> Result<Response<Full<Bytes>>, ProxyError> {
     let (mut parts, body) = req.into_parts();
     let body_bytes = body.collect().await.map_err(ProxyError::Hyper)?.to_bytes();
@@ -57,9 +59,10 @@ async fn forward_inner(
         "x-forwarded-for",
         client_addr.ip().to_string().parse().unwrap(),
     );
-    parts
-        .headers
-        .insert("x-forwarded-proto", "http".parse().unwrap());
+    parts.headers.insert(
+        "x-forwarded-proto",
+        if is_tls { "https" } else { "http" }.parse().unwrap(),
+    );
 
     let build_request = |parts: &http::request::Parts, body: &Bytes| {
         let mut builder = Request::builder()

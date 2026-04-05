@@ -8,6 +8,7 @@ pub struct Config {
     pub server: ServerConfig,
     #[serde(default)]
     pub routes: Vec<RouteConfig>,
+    pub tls: Option<TlsConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -17,6 +18,7 @@ pub struct ServerConfig {
     pub max_idle_connections: usize,
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
+    pub http_challenge_listen: Option<String>,
 }
 
 fn default_max_idle() -> usize {
@@ -35,6 +37,19 @@ pub struct RouteConfig {
     pub plugins: Vec<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct TlsConfig {
+    pub acme_email: String,
+    #[serde(default = "default_acme_directory")]
+    pub acme_directory: String,
+    pub cache_dir: String,
+    pub domains: Vec<String>,
+}
+
+fn default_acme_directory() -> String {
+    "https://acme-v02.api.letsencrypt.org/directory".to_string()
+}
+
 impl Config {
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, ProxyError> {
         let content = std::fs::read_to_string(path.as_ref())
@@ -47,7 +62,6 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<(), ProxyError> {
-        // Validate listen address
         self.server
             .listen
             .parse::<std::net::SocketAddr>()
@@ -58,7 +72,12 @@ impl Config {
                 ))
             })?;
 
-        // Validate routes
+        if self.tls.is_some() && self.server.http_challenge_listen.is_none() {
+            return Err(ProxyError::Config(
+                "http_challenge_listen is required when [tls] is configured".to_string(),
+            ));
+        }
+
         for (i, route) in self.routes.iter().enumerate() {
             if route.path_prefix.is_empty() || !route.path_prefix.starts_with('/') {
                 return Err(ProxyError::Config(format!(
@@ -154,5 +173,40 @@ upstream = "127.0.0.1:8000"
 "#;
         let cfg = Config::parse(toml).unwrap();
         assert!(cfg.routes[0].plugins.is_empty());
+    }
+
+    #[test]
+    fn tls_config_parses() {
+        let toml = r#"
+[server]
+listen = "0.0.0.0:443"
+http_challenge_listen = "0.0.0.0:80"
+
+[tls]
+acme_email = "admin@example.com"
+cache_dir = "./certs"
+domains = ["example.com", "www.example.com"]
+
+[[routes]]
+path_prefix = "/"
+upstream = "127.0.0.1:3000"
+"#;
+        let cfg = Config::parse(toml).unwrap();
+        let tls = cfg.tls.unwrap();
+        assert_eq!(tls.acme_email, "admin@example.com");
+        assert_eq!(tls.domains.len(), 2);
+        assert_eq!(
+            tls.acme_directory,
+            "https://acme-v02.api.letsencrypt.org/directory"
+        );
+        assert_eq!(cfg.server.http_challenge_listen.unwrap(), "0.0.0.0:80");
+    }
+
+    #[test]
+    fn missing_tls_defaults_none() {
+        let toml = "[server]\nlisten = \"0.0.0.0:80\"";
+        let cfg = Config::parse(toml).unwrap();
+        assert!(cfg.tls.is_none());
+        assert!(cfg.server.http_challenge_listen.is_none());
     }
 }

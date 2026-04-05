@@ -6,7 +6,7 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use prismproxy::config::{Config, RouteConfig, ServerConfig};
+use prismproxy::config::{Config, RouteConfig, ServerConfig, TlsConfig};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -87,6 +87,85 @@ impl TestProxyHot {
     }
 }
 
+/// Generate a self-signed cert + key PEM valid for 127.0.0.1 and localhost.
+pub fn generate_self_signed_cert() -> (String, String) {
+    let params =
+        rcgen::CertificateParams::new(vec!["127.0.0.1".to_string(), "localhost".to_string()])
+            .unwrap();
+    let key_pair = rcgen::KeyPair::generate().unwrap();
+    let cert = params.self_signed(&key_pair).unwrap();
+    (cert.pem(), key_pair.serialize_pem())
+}
+
+/// Proxy with TLS enabled, using a pre-generated self-signed certificate.
+/// Uses `run_with_listener` (no hot reload) for test simplicity.
+/// The upstream responds with 200 "tls-ok".
+pub struct TestProxyTls {
+    pub addr: SocketAddr,
+    _shutdown: tokio::sync::oneshot::Sender<()>,
+    _dir: tempfile::TempDir,
+}
+
+impl TestProxyTls {
+    pub async fn start() -> Self {
+        let dir = tempfile::TempDir::new().unwrap();
+        let cache_dir = dir.path().to_str().unwrap().to_string();
+
+        let (cert_pem, key_pem) = generate_self_signed_cert();
+        std::fs::write(dir.path().join("cert.pem"), &cert_pem).unwrap();
+        std::fs::write(dir.path().join("key.pem"), &key_pem).unwrap();
+
+        // Start a mock upstream
+        let upstream = MockUpstream::start(200, "tls-ok").await;
+        let upstream_addr = format!("127.0.0.1:{}", upstream.addr.port());
+
+        let config = Config {
+            server: ServerConfig {
+                listen: "127.0.0.1:0".to_string(),
+                max_idle_connections: 2,
+                timeout_ms: 5000,
+                http_challenge_listen: None,
+            },
+            routes: vec![RouteConfig {
+                path_prefix: "/".to_string(),
+                upstream: upstream_addr,
+                plugins: vec![],
+            }],
+            tls: Some(TlsConfig {
+                acme_email: "test@example.com".to_string(),
+                acme_directory: "https://acme-staging-v02.api.letsencrypt.org/directory"
+                    .to_string(),
+                cache_dir,
+                domains: vec!["localhost".to_string()],
+            }),
+        };
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+
+        tokio::spawn(async move {
+            prismproxy::server::run_with_listener(listener, config, async {
+                rx.await.ok();
+            })
+            .await
+            .unwrap();
+            // Keep upstream alive for the test duration
+            drop(upstream);
+        });
+
+        Self {
+            addr,
+            _shutdown: tx,
+            _dir: dir,
+        }
+    }
+
+    pub fn url(&self, path: &str) -> String {
+        format!("https://127.0.0.1:{}{}", self.addr.port(), path)
+    }
+}
+
 /// Build a Config with no plugins on any route.
 pub fn test_config(routes: Vec<(&str, &str)>) -> Config {
     Config {
@@ -94,6 +173,7 @@ pub fn test_config(routes: Vec<(&str, &str)>) -> Config {
             listen: "127.0.0.1:0".to_string(),
             max_idle_connections: 2,
             timeout_ms: 5000,
+            http_challenge_listen: None,
         },
         routes: routes
             .into_iter()
@@ -103,6 +183,7 @@ pub fn test_config(routes: Vec<(&str, &str)>) -> Config {
                 plugins: vec![],
             })
             .collect(),
+        tls: None,
     }
 }
 
@@ -112,6 +193,7 @@ pub fn test_config_with_timeout(routes: Vec<(&str, &str)>, timeout_ms: u64) -> C
             listen: "127.0.0.1:0".to_string(),
             max_idle_connections: 2,
             timeout_ms,
+            http_challenge_listen: None,
         },
         routes: routes
             .into_iter()
@@ -121,6 +203,7 @@ pub fn test_config_with_timeout(routes: Vec<(&str, &str)>, timeout_ms: u64) -> C
                 plugins: vec![],
             })
             .collect(),
+        tls: None,
     }
 }
 
@@ -140,8 +223,10 @@ pub fn test_config_with_routes(routes: Vec<RouteConfig>) -> Config {
             listen: "127.0.0.1:0".to_string(),
             max_idle_connections: 2,
             timeout_ms: 5000,
+            http_challenge_listen: None,
         },
         routes,
+        tls: None,
     }
 }
 

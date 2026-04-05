@@ -17,12 +17,13 @@ pub async fn handle(
     pool: Arc<ConnectionPool>,
     client_addr: SocketAddr,
     start_time: Arc<std::time::Instant>,
+    is_tls: bool,
     req: Request<hyper::body::Incoming>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let method = req.method().clone();
     let path = req.uri().path().to_string();
 
-    match route(app_state, pool, client_addr, start_time, req).await {
+    match route(app_state, pool, client_addr, start_time, is_tls, req).await {
         Ok(resp) => {
             info!(%method, %path, status = %resp.status(), "response");
             Ok(resp)
@@ -39,6 +40,7 @@ async fn route(
     pool: Arc<ConnectionPool>,
     client_addr: SocketAddr,
     start_time: Arc<std::time::Instant>,
+    is_tls: bool,
     req: Request<hyper::body::Incoming>,
 ) -> Result<Response<Full<Bytes>>, ProxyError> {
     let path = req.uri().path().to_string();
@@ -69,6 +71,7 @@ async fn route(
         &pool,
         timeout,
         client_addr,
+        is_tls,
     )
     .await
 }

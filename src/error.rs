@@ -22,4 +22,10 @@ pub enum ProxyError {
 
     #[error("plugin: {0}")]
     Plugin(String),
+
+    #[error("tls: {0}")]
+    Tls(String),
+
+    #[error("acme: {0}")]
+    Acme(String),
 }
