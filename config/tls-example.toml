@@ -1,0 +1,17 @@
+# TLS + HTTP/2 example — edit domains and paths before use
+[server]
+listen = "0.0.0.0:443"
+http_challenge_listen = "0.0.0.0:80"
+max_idle_connections = 10
+timeout_ms = 30000
+
+[tls]
+acme_email = "you@example.com"
+# acme_directory = "https://acme-staging-v02.api.letsencrypt.org/directory"  # uncomment to test
+acme_directory = "https://acme-v02.api.letsencrypt.org/directory"
+cache_dir = "./certs"
+domains = ["example.com", "www.example.com"]
+
+[[routes]]
+path_prefix = "/"
+upstream = "127.0.0.1:3000"
