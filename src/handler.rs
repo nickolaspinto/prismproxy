@@ -46,7 +46,10 @@ async fn route(
     let path = req.uri().path().to_string();
 
     if path == "/health" {
-        return Ok(health_response(&start_time));
+        let state = app_state.load_full();
+        let routes = state.routes.len();
+        let tls = state.tls.is_some();
+        return Ok(health_response(&start_time, routes, tls));
     }
 
     let state = app_state.load_full();
@@ -76,12 +79,18 @@ async fn route(
     .await
 }
 
-fn health_response(start_time: &std::time::Instant) -> Response<Full<Bytes>> {
+fn health_response(
+    start_time: &std::time::Instant,
+    routes: usize,
+    tls: bool,
+) -> Response<Full<Bytes>> {
     let uptime = start_time.elapsed().as_secs_f64();
     let body = format!(
-        r#"{{"status":"ok","version":"{}","uptime_secs":{:.1}}}"#,
+        r#"{{"status":"ok","version":"{}","uptime_secs":{:.1},"routes":{},"tls":{}}}"#,
         env!("CARGO_PKG_VERSION"),
-        uptime
+        uptime,
+        routes,
+        tls,
     );
     Response::builder()
         .status(StatusCode::OK)
