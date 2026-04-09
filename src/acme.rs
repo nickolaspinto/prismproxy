@@ -383,4 +383,34 @@ mod tests {
 
         let _ = shutdown_tx.send(());
     }
+
+    #[test]
+    fn cert_needs_renewal_returns_true_when_cert_missing() {
+        assert!(cert_needs_renewal("/nonexistent/path/certdir"));
+    }
+
+    #[test]
+    fn cert_needs_renewal_returns_false_when_recently_issued() {
+        let dir = tempfile::TempDir::new().unwrap();
+        // Write a dummy cert.pem so the file exists
+        std::fs::write(dir.path().join("cert.pem"), "dummy").unwrap();
+        // Write issued_at as now
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        std::fs::write(dir.path().join("issued_at"), now.to_string()).unwrap();
+
+        assert!(!cert_needs_renewal(dir.path().to_str().unwrap()));
+    }
+
+    #[test]
+    fn cert_needs_renewal_returns_true_when_issued_at_old() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("cert.pem"), "dummy").unwrap();
+        // issued_at = 0 (epoch) → definitely expired
+        std::fs::write(dir.path().join("issued_at"), "0").unwrap();
+
+        assert!(cert_needs_renewal(dir.path().to_str().unwrap()));
+    }
 }
