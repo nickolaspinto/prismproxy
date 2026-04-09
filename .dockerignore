@@ -1,0 +1,5 @@
+target/
+.worktrees/
+.git/
+certs/
+*.wasm
