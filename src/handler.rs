@@ -22,10 +22,16 @@ pub async fn handle(
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let method = req.method().clone();
     let path = req.uri().path().to_string();
+    let req_start = std::time::Instant::now();
 
     match route(app_state, pool, client_addr, start_time, is_tls, req).await {
-        Ok(resp) => {
-            info!(%method, %path, status = %resp.status(), "response");
+        Ok(mut resp) => {
+            let elapsed_ms = req_start.elapsed().as_millis();
+            resp.headers_mut().insert(
+                "x-response-time",
+                format!("{elapsed_ms}ms").parse().unwrap(),
+            );
+            info!(%method, %path, status = %resp.status(), elapsed_ms, "response");
             Ok(resp)
         }
         Err(e) => {
