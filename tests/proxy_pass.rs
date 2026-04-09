@@ -136,3 +136,21 @@ async fn adds_x_forwarded_for_header() {
         .unwrap()
         .contains("http"));
 }
+
+#[tokio::test]
+async fn response_includes_x_response_time_header() {
+    let upstream = MockUpstream::start(200, "ok").await;
+    let proxy = TestProxy::start(test_config(vec![(
+        "/",
+        &format!("127.0.0.1:{}", upstream.addr.port()),
+    )]))
+    .await;
+
+    let resp = reqwest::get(proxy.url("/anything")).await.unwrap();
+    assert!(
+        resp.headers().contains_key("x-response-time"),
+        "x-response-time header should be present"
+    );
+    let val = resp.headers()["x-response-time"].to_str().unwrap();
+    assert!(val.ends_with("ms"), "expected format like '5ms', got: {val}");
+}
