@@ -152,5 +152,8 @@ async fn response_includes_x_response_time_header() {
         "x-response-time header should be present"
     );
     let val = resp.headers()["x-response-time"].to_str().unwrap();
-    assert!(val.ends_with("ms"), "expected format like '5ms', got: {val}");
+    assert!(
+        val.ends_with("ms"),
+        "expected format like '5ms', got: {val}"
+    );
 }
