@@ -33,6 +33,10 @@ pub fn build_state(config: Config) -> Result<AppState, ProxyError> {
         routes.push(RouteState { route, runtime });
     }
 
+    if routes.is_empty() {
+        tracing::warn!("no routes configured — all requests will return 404");
+    }
+
     let tls = if let Some(ref tls_config) = config.tls {
         let cert_path = Path::new(&tls_config.cache_dir).join("cert.pem");
         let key_path = Path::new(&tls_config.cache_dir).join("key.pem");
