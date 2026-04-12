@@ -95,12 +95,16 @@ async fn forward_inner(
         }
     };
 
-    let (resp_parts, resp_body) = resp.into_parts();
+    let (mut resp_parts, resp_body) = resp.into_parts();
     let resp_bytes = resp_body
         .collect()
         .await
         .map_err(ProxyError::Hyper)?
         .to_bytes();
+
+    for h in HOP_BY_HOP {
+        resp_parts.headers.remove(*h);
+    }
 
     Ok(Response::from_parts(resp_parts, Full::new(resp_bytes)))
 }

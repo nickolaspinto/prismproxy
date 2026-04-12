@@ -437,3 +437,49 @@ impl HeaderEchoUpstream {
         }
     }
 }
+
+/// Upstream that injects hop-by-hop headers in its response to verify the proxy strips them.
+pub struct HopByHopUpstream {
+    pub addr: SocketAddr,
+    _shutdown: tokio::sync::oneshot::Sender<()>,
+}
+
+impl HopByHopUpstream {
+    pub async fn start() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
+
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    result = listener.accept() => {
+                        let (stream, _) = result.unwrap();
+                        let io = TokioIo::new(stream);
+                        tokio::spawn(async move {
+                            http1::Builder::new()
+                                .serve_connection(io, service_fn(move |_req| async move {
+                                    Ok::<_, Infallible>(
+                                        Response::builder()
+                                            .status(StatusCode::OK)
+                                            .header("proxy-authenticate", "Basic realm=\"test\"")
+                                            .header("x-upstream-marker", "present")
+                                            .body(Full::new(Bytes::from("hop-test")))
+                                            .unwrap(),
+                                    )
+                                }))
+                                .await
+                                .ok();
+                        });
+                    }
+                    _ = &mut rx => break,
+                }
+            }
+        });
+
+        Self {
+            addr,
+            _shutdown: tx,
+        }
+    }
+}

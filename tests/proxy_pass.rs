@@ -1,7 +1,7 @@
 mod common;
 use common::{
-    test_config, test_config_with_timeout, EchoUpstream, HeaderEchoUpstream, MockUpstream,
-    SlowUpstream, TestProxy,
+    test_config, test_config_with_timeout, EchoUpstream, HeaderEchoUpstream, HopByHopUpstream,
+    MockUpstream, SlowUpstream, TestProxy,
 };
 
 #[tokio::test]
@@ -155,5 +155,28 @@ async fn response_includes_x_response_time_header() {
     assert!(
         val.ends_with("ms"),
         "expected format like '5ms', got: {val}"
+    );
+}
+
+#[tokio::test]
+async fn strips_hop_by_hop_headers_from_upstream_response() {
+    let upstream = HopByHopUpstream::start().await;
+    let proxy = TestProxy::start(test_config(vec![(
+        "/",
+        &format!("127.0.0.1:{}", upstream.addr.port()),
+    )]))
+    .await;
+
+    let resp = reqwest::get(proxy.url("/test")).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    // proxy-authenticate is a hop-by-hop header — must be stripped
+    assert!(
+        !resp.headers().contains_key("proxy-authenticate"),
+        "proxy-authenticate must be stripped from upstream response"
+    );
+    // non-hop-by-hop headers should pass through
+    assert!(
+        resp.headers().contains_key("x-upstream-marker"),
+        "x-upstream-marker should pass through"
     );
 }
