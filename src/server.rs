@@ -1,8 +1,11 @@
 use arc_swap::ArcSwap;
+use bytes::Bytes;
+use http_body_util::Full;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
+use std::convert::Infallible;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -110,14 +113,41 @@ pub async fn run_with_listener_hot(
         });
     }
 
-    // Daily cert renewal task
-    if has_tls_config {
-        let app_state = app_state.clone();
-        let config_path = config_path.clone();
+    // HTTP → HTTPS redirect server + daily cert renewal
+    let challenge_store = if has_tls_config {
+        let bind = http_challenge_listen.clone().unwrap_or_default();
+        let store = Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+
+        // Derive HTTPS port from config listen address
+        let https_port: u16 = {
+            let config = Config::from_file(&config_path).unwrap_or_else(|_| {
+                crate::config::Config::parse("[server]\nlisten=\"0.0.0.0:443\"").unwrap()
+            });
+            config
+                .server
+                .listen
+                .parse::<SocketAddr>()
+                .map(|a| a.port())
+                .unwrap_or(443)
+        };
+
+        if !bind.is_empty() {
+            let store_clone = store.clone();
+            tokio::spawn(run_http_redirect_server(bind, https_port, store_clone));
+        }
+
+        let store_for_renewal = store.clone();
+        let app_state_r = app_state.clone();
+        let config_path_r = config_path.clone();
         tokio::spawn(async move {
-            acme::renewal_loop(config_path, app_state).await;
+            acme::renewal_loop(config_path_r, app_state_r, Some(store_for_renewal)).await;
         });
-    }
+
+        Some(store)
+    } else {
+        None
+    };
+    let _ = challenge_store; // suppress unused warning if no TLS
 
     tokio::pin!(shutdown);
     loop {
@@ -234,4 +264,81 @@ fn try_reload(config_path: &Path) -> Result<AppState, ProxyError> {
     let config = Config::from_file(config_path)?;
     config.validate()?;
     build_state(config)
+}
+
+/// Persistent HTTP server on `bind_addr` that:
+/// - Serves ACME HTTP-01 challenges from `challenges` (written by the renewal loop)
+/// - Returns 301 → HTTPS for all other requests
+pub async fn run_http_redirect_server(
+    bind_addr: String,
+    https_port: u16,
+    challenges: acme::ChallengeStore,
+) {
+    let listener = match TcpListener::bind(&bind_addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            error!(addr = %bind_addr, "HTTP redirect server failed to bind: {e}");
+            return;
+        }
+    };
+    info!(addr = %bind_addr, https_port, "HTTP redirect server started");
+    run_http_redirect_server_with_listener(listener, https_port, challenges).await;
+}
+
+/// Like [run_http_redirect_server] but accepts a pre-bound listener. Exported for testing.
+pub async fn run_http_redirect_server_with_listener(
+    listener: TcpListener,
+    https_port: u16,
+    challenges: acme::ChallengeStore,
+) {
+    loop {
+        let (stream, _) = match listener.accept().await {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("redirect server accept error: {e}");
+                continue;
+            }
+        };
+        let challenges = challenges.clone();
+        tokio::spawn(async move {
+            let io = TokioIo::new(stream);
+            let svc = service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
+                let challenges = challenges.clone();
+                async move {
+                    let path = req.uri().path().to_string();
+                    const PREFIX: &str = "/.well-known/acme-challenge/";
+                    if let Some(token) = path.strip_prefix(PREFIX) {
+                        let store = challenges.read().unwrap();
+                        if let Some(key_auth) = store.get(token) {
+                            return Ok::<_, Infallible>(
+                                hyper::Response::builder()
+                                    .status(200)
+                                    .header("content-type", "text/plain")
+                                    .body(Full::new(Bytes::from(key_auth.clone())))
+                                    .unwrap(),
+                            );
+                        }
+                    }
+                    // Redirect to HTTPS
+                    let host = req
+                        .headers()
+                        .get(hyper::header::HOST)
+                        .and_then(|h| h.to_str().ok())
+                        .map(|h| h.split(':').next().unwrap_or(h).to_string())
+                        .unwrap_or_default();
+                    let location = if https_port == 443 {
+                        format!("https://{host}{}", req.uri())
+                    } else {
+                        format!("https://{host}:{https_port}{}", req.uri())
+                    };
+                    Ok(hyper::Response::builder()
+                        .status(301)
+                        .header("location", &location)
+                        .body(Full::new(Bytes::new()))
+                        .unwrap())
+                }
+            });
+            let _ = http1::Builder::new().serve_connection(io, svc).await;
+        });
+    }
 }

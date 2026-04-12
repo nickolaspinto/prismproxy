@@ -19,6 +19,10 @@ use crate::config::{Config, TlsConfig};
 use crate::error::ProxyError;
 use crate::state::{build_state, AppState};
 
+/// Shared map of ACME HTTP-01 challenge tokens → key authorizations.
+/// Written by [provision_with_store] during renewal; read by the redirect server.
+pub type ChallengeStore = Arc<std::sync::RwLock<HashMap<String, String>>>;
+
 /// Returns true if no cert exists or the cert was issued more than 60 days ago.
 /// Uses a sidecar `issued_at` file (Unix epoch seconds) written by provision().
 /// LE certs are 90 days; we renew at 60 days to leave a 30-day buffer.
@@ -227,9 +231,177 @@ async fn provision_inner(
     Ok((cert_chain_pem, key_pem))
 }
 
+/// Like [provision] but injects challenge tokens into `store` instead of binding a new listener.
+/// Used during renewal when the redirect server already owns the http_challenge_listen port.
+pub async fn provision_with_store(
+    tls_config: &TlsConfig,
+    store: &ChallengeStore,
+) -> Result<(String, String), ProxyError> {
+    let cache = Path::new(&tls_config.cache_dir);
+    std::fs::create_dir_all(cache)
+        .map_err(|e| ProxyError::Acme(format!("create cache_dir: {e}")))?;
+
+    let lock_path = cache.join(".renewing");
+    if lock_path.exists() {
+        return Err(ProxyError::Acme(
+            "another renewal is in progress (.renewing exists)".to_string(),
+        ));
+    }
+    std::fs::write(&lock_path, b"")
+        .map_err(|e| ProxyError::Acme(format!("create lockfile: {e}")))?;
+
+    let result = provision_inner_with_store(tls_config, store).await;
+
+    if result.is_err() {
+        let _ = std::fs::remove_file(&lock_path);
+        let _ = std::fs::remove_file(cache.join("cert.pem.tmp"));
+        let _ = std::fs::remove_file(cache.join("key.pem.tmp"));
+    } else {
+        let _ = std::fs::remove_file(&lock_path);
+    }
+    // Always clear challenge tokens from store
+    store.write().unwrap().clear();
+
+    result
+}
+
+async fn provision_inner_with_store(
+    tls_config: &TlsConfig,
+    store: &ChallengeStore,
+) -> Result<(String, String), ProxyError> {
+    let (account, _credentials) = Account::create(
+        &NewAccount {
+            contact: &[&format!("mailto:{}", tls_config.acme_email)],
+            terms_of_service_agreed: true,
+            only_return_existing: false,
+        },
+        &tls_config.acme_directory,
+        None,
+    )
+    .await
+    .map_err(|e| ProxyError::Acme(format!("create account: {e}")))?;
+
+    let identifiers: Vec<Identifier> = tls_config
+        .domains
+        .iter()
+        .map(|d| Identifier::Dns(d.clone()))
+        .collect();
+    let mut order = account
+        .new_order(&NewOrder {
+            identifiers: &identifiers,
+        })
+        .await
+        .map_err(|e| ProxyError::Acme(format!("new order: {e}")))?;
+
+    let authorizations = order
+        .authorizations()
+        .await
+        .map_err(|e| ProxyError::Acme(format!("get authorizations: {e}")))?;
+
+    let mut challenge_urls: Vec<String> = Vec::new();
+    for auth in &authorizations {
+        let challenge = auth
+            .challenges
+            .iter()
+            .find(|c| c.r#type == ChallengeType::Http01)
+            .ok_or_else(|| ProxyError::Acme("no HTTP-01 challenge available".to_string()))?;
+        let key_auth = order.key_authorization(challenge);
+        store
+            .write()
+            .unwrap()
+            .insert(challenge.token.clone(), key_auth.as_str().to_string());
+        challenge_urls.push(challenge.url.clone());
+    }
+
+    for url in &challenge_urls {
+        order
+            .set_challenge_ready(url)
+            .await
+            .map_err(|e| ProxyError::Acme(format!("set challenge ready: {e}")))?;
+    }
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+    loop {
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        let state = order
+            .refresh()
+            .await
+            .map_err(|e| ProxyError::Acme(format!("refresh order: {e}")))?;
+        match state.status {
+            OrderStatus::Ready => break,
+            OrderStatus::Invalid => {
+                return Err(ProxyError::Acme("ACME order became invalid".to_string()))
+            }
+            _ => {}
+        }
+        if tokio::time::Instant::now() > deadline {
+            return Err(ProxyError::Acme(
+                "ACME order timed out after 120s".to_string(),
+            ));
+        }
+    }
+
+    // Reuse the finalize + write logic from provision_inner
+    let params = rcgen::CertificateParams::new(tls_config.domains.clone())
+        .map_err(|e| ProxyError::Acme(format!("cert params: {e}")))?;
+    let key_pair =
+        rcgen::KeyPair::generate().map_err(|e| ProxyError::Acme(format!("key generation: {e}")))?;
+    let csr = params
+        .serialize_request(&key_pair)
+        .map_err(|e| ProxyError::Acme(format!("serialize CSR: {e}")))?;
+
+    order
+        .finalize(csr.der())
+        .await
+        .map_err(|e| ProxyError::Acme(format!("finalize order: {e}")))?;
+
+    let deadline2 = tokio::time::Instant::now() + Duration::from_secs(60);
+    let cert_chain_pem = loop {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        match order.certificate().await {
+            Ok(Some(chain)) => break chain,
+            Ok(None) => {}
+            Err(e) => return Err(ProxyError::Acme(format!("get certificate: {e}"))),
+        }
+        if tokio::time::Instant::now() > deadline2 {
+            return Err(ProxyError::Acme("cert not ready after 60s".to_string()));
+        }
+    };
+
+    let cache = Path::new(&tls_config.cache_dir);
+    let cert_tmp = cache.join("cert.pem.tmp");
+    let key_tmp = cache.join("key.pem.tmp");
+    let key_pem = key_pair.serialize_pem();
+    std::fs::write(&cert_tmp, &cert_chain_pem)
+        .map_err(|e| ProxyError::Acme(format!("write cert.pem.tmp: {e}")))?;
+    std::fs::write(&key_tmp, &key_pem)
+        .map_err(|e| ProxyError::Acme(format!("write key.pem.tmp: {e}")))?;
+    std::fs::rename(&cert_tmp, cache.join("cert.pem"))
+        .map_err(|e| ProxyError::Acme(format!("rename cert.pem: {e}")))?;
+    std::fs::rename(&key_tmp, cache.join("key.pem"))
+        .map_err(|e| ProxyError::Acme(format!("rename key.pem: {e}")))?;
+
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    std::fs::write(cache.join("issued_at"), now_secs.to_string())
+        .map_err(|e| ProxyError::Acme(format!("write issued_at: {e}")))?;
+
+    info!(domains = ?tls_config.domains, "certificate provisioned via store");
+    Ok((cert_chain_pem, key_pem))
+}
+
 /// Daily renewal loop. Reads config from disk each tick to pick up any changes.
 /// On renewal success, rebuilds AppState and atomically swaps via ArcSwap.
-pub async fn renewal_loop(config_path: PathBuf, app_state: Arc<ArcSwap<AppState>>) {
+///
+/// If `challenge_store` is Some, challenge tokens are injected into the running redirect server
+/// instead of binding the http_challenge_listen port again.
+pub async fn renewal_loop(
+    config_path: PathBuf,
+    app_state: Arc<ArcSwap<AppState>>,
+    challenge_store: Option<ChallengeStore>,
+) {
     // Tick immediately on first call (interval fires after first period),
     // then every 24 hours.
     let mut interval = tokio::time::interval(Duration::from_secs(86_400));
@@ -249,20 +421,25 @@ pub async fn renewal_loop(config_path: PathBuf, app_state: Arc<ArcSwap<AppState>
             None => continue,
         };
 
-        let challenge_listen = match config.server.http_challenge_listen {
-            Some(ref l) => l.clone(),
-            None => {
-                warn!("renewal: http_challenge_listen not configured, skipping");
-                continue;
-            }
-        };
-
         if !cert_needs_renewal(&tls_config.cache_dir) {
             continue;
         }
 
         info!(domains = ?tls_config.domains, "renewing TLS certificate");
-        match provision(&tls_config, &challenge_listen).await {
+        let result = if let Some(ref store) = challenge_store {
+            provision_with_store(&tls_config, store).await
+        } else {
+            let challenge_listen = match config.server.http_challenge_listen {
+                Some(ref l) => l.clone(),
+                None => {
+                    warn!("renewal: http_challenge_listen not configured, skipping");
+                    continue;
+                }
+            };
+            provision(&tls_config, &challenge_listen).await
+        };
+
+        match result {
             Ok(_) => match build_state(config) {
                 Ok(new_state) => {
                     app_state.store(Arc::new(new_state));
