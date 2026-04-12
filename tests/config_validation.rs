@@ -87,3 +87,41 @@ listen = "0.0.0.0:80"
     let cfg = Config::parse(toml).unwrap();
     assert!(cfg.validate().is_ok());
 }
+
+#[test]
+fn rejects_duplicate_path_prefix() {
+    let toml = r#"
+[server]
+listen = "127.0.0.1:8080"
+
+[[routes]]
+path_prefix = "/api"
+upstream = "127.0.0.1:3000"
+
+[[routes]]
+path_prefix = "/api"
+upstream = "127.0.0.1:4000"
+"#;
+    let cfg = Config::parse(toml).unwrap();
+    let result = cfg.validate();
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("duplicate"));
+}
+
+#[test]
+fn accepts_distinct_prefixes() {
+    let toml = r#"
+[server]
+listen = "127.0.0.1:8080"
+
+[[routes]]
+path_prefix = "/api"
+upstream = "127.0.0.1:3000"
+
+[[routes]]
+path_prefix = "/"
+upstream = "127.0.0.1:4000"
+"#;
+    let cfg = Config::parse(toml).unwrap();
+    assert!(cfg.validate().is_ok());
+}

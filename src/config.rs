@@ -78,7 +78,14 @@ impl Config {
             ));
         }
 
+        let mut seen_prefixes = std::collections::HashSet::new();
         for (i, route) in self.routes.iter().enumerate() {
+            if !seen_prefixes.insert(&route.path_prefix) {
+                return Err(ProxyError::Config(format!(
+                    "route[{i}]: duplicate path_prefix '{}'",
+                    route.path_prefix
+                )));
+            }
             if route.path_prefix.is_empty() || !route.path_prefix.starts_with('/') {
                 return Err(ProxyError::Config(format!(
                     "route[{i}]: path_prefix must start with '/', got '{}'",
