@@ -63,6 +63,9 @@ async fn forward_inner(
         "x-forwarded-proto",
         if is_tls { "https" } else { "http" }.parse().unwrap(),
     );
+    if let Some(host) = parts.headers.get(hyper::header::HOST).cloned() {
+        parts.headers.insert("x-forwarded-host", host);
+    }
 
     let build_request = |parts: &http::request::Parts, body: &Bytes| {
         let mut builder = Request::builder()

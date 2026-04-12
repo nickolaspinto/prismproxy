@@ -135,6 +135,7 @@ async fn adds_x_forwarded_for_header() {
         .as_str()
         .unwrap()
         .contains("http"));
+    assert!(headers["x-forwarded-host"].as_str().is_some());
 }
 
 #[tokio::test]
