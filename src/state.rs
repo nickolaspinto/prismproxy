@@ -1,4 +1,6 @@
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 use crate::config::{Config, RouteConfig};
 use crate::error::ProxyError;
@@ -8,6 +10,8 @@ use crate::tls::{build_tls_state, TlsState};
 pub struct RouteState {
     pub route: RouteConfig,
     pub runtime: PluginRuntime,
+    /// Set to false by the health-check loop after consecutive failures.
+    pub healthy: Arc<AtomicBool>,
 }
 
 pub struct AppState {
@@ -30,7 +34,11 @@ pub fn build_state(config: Config) -> Result<AppState, ProxyError> {
         for path in &route.plugins {
             runtime.load(path)?;
         }
-        routes.push(RouteState { route, runtime });
+        routes.push(RouteState {
+            route,
+            runtime,
+            healthy: Arc::new(AtomicBool::new(true)),
+        });
     }
 
     if routes.is_empty() {

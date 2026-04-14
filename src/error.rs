@@ -28,4 +28,7 @@ pub enum ProxyError {
 
     #[error("acme: {0}")]
     Acme(String),
+
+    #[error("upstream unhealthy: {0}")]
+    UpstreamUnhealthy(String),
 }
