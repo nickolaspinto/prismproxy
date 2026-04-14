@@ -31,6 +31,44 @@ pub async fn run_with_listener(
 ) -> Result<(), ProxyError> {
     let pool = Arc::new(ConnectionPool::new(config.server.max_idle_connections));
     let app_state = Arc::new(ArcSwap::from_pointee(build_state(config)?));
+    let metrics = crate::metrics::Metrics::new();
+
+    // Spawn upstream health-check loops
+    {
+        let state = app_state.load_full();
+        for rs in &state.routes {
+            tokio::spawn(crate::health_check::upstream_health_loop(
+                rs.route.upstream.clone(),
+                rs.healthy.clone(),
+                Duration::from_secs(10),
+                3,
+                2,
+            ));
+        }
+    }
+
+    run_accept_loop(listener, app_state, pool, metrics, shutdown).await
+}
+
+/// Lower-level entry: accepts a pre-built app state. Used by tests that need to
+/// pre-configure route health flags without waiting for health-check loops to fire.
+pub async fn run_with_app_state(
+    app_state: Arc<ArcSwap<AppState>>,
+    listener: TcpListener,
+    shutdown: impl Future<Output = ()>,
+) -> Result<(), ProxyError> {
+    let pool = Arc::new(ConnectionPool::new(8));
+    let metrics = crate::metrics::Metrics::new();
+    run_accept_loop(listener, app_state, pool, metrics, shutdown).await
+}
+
+async fn run_accept_loop(
+    listener: TcpListener,
+    app_state: Arc<ArcSwap<AppState>>,
+    pool: Arc<ConnectionPool>,
+    metrics: Arc<crate::metrics::Metrics>,
+    shutdown: impl Future<Output = ()>,
+) -> Result<(), ProxyError> {
     let start_time = Arc::new(Instant::now());
     tokio::pin!(shutdown);
 
@@ -41,15 +79,16 @@ pub async fn run_with_listener(
                 let app_state = app_state.clone();
                 let pool = pool.clone();
                 let start_time = start_time.clone();
+                let metrics = metrics.clone();
                 tokio::spawn(async move {
                     let state = app_state.load_full();
                     if let Some(ref tls_state) = state.tls {
                         let acceptor = tls_state.acceptor.clone();
                         drop(state);
-                        serve_tls(stream, addr, acceptor, app_state, pool, start_time).await;
+                        serve_tls(stream, addr, acceptor, app_state, pool, start_time, metrics).await;
                     } else {
                         drop(state);
-                        serve_plain(stream, addr, app_state, pool, start_time).await;
+                        serve_plain(stream, addr, app_state, pool, start_time, metrics).await;
                     }
                 });
             }
@@ -76,6 +115,7 @@ pub async fn run_with_listener_hot(
     let pool = Arc::new(ConnectionPool::new(config.server.max_idle_connections));
     let has_tls_config = config.tls.is_some();
     let http_challenge_listen = config.server.http_challenge_listen.clone();
+    let metrics = crate::metrics::Metrics::new();
 
     let mut initial_state = build_state(config)?;
 
@@ -96,7 +136,20 @@ pub async fn run_with_listener_hot(
     }
 
     let app_state = Arc::new(ArcSwap::from_pointee(initial_state));
-    let start_time = Arc::new(Instant::now());
+
+    // Spawn upstream health-check loops for initial routes
+    {
+        let state = app_state.load_full();
+        for rs in &state.routes {
+            tokio::spawn(crate::health_check::upstream_health_loop(
+                rs.route.upstream.clone(),
+                rs.healthy.clone(),
+                Duration::from_secs(10),
+                3,
+                2,
+            ));
+        }
+    }
 
     let initial_mtime = tokio::fs::metadata(&config_path)
         .await
@@ -149,32 +202,7 @@ pub async fn run_with_listener_hot(
     };
     let _ = challenge_store; // suppress unused warning if no TLS
 
-    tokio::pin!(shutdown);
-    loop {
-        tokio::select! {
-            result = listener.accept() => {
-                let (stream, addr) = result?;
-                let app_state = app_state.clone();
-                let pool = pool.clone();
-                let start_time = start_time.clone();
-                tokio::spawn(async move {
-                    let state = app_state.load_full();
-                    if let Some(ref tls_state) = state.tls {
-                        let acceptor = tls_state.acceptor.clone();
-                        drop(state);
-                        serve_tls(stream, addr, acceptor, app_state, pool, start_time).await;
-                    } else {
-                        drop(state);
-                        serve_plain(stream, addr, app_state, pool, start_time).await;
-                    }
-                });
-            }
-            _ = &mut shutdown => {
-                info!("shutting down");
-                return Ok(());
-            }
-        }
-    }
+    run_accept_loop(listener, app_state, pool, metrics, shutdown).await
 }
 
 async fn serve_plain(
@@ -183,13 +211,15 @@ async fn serve_plain(
     app_state: Arc<ArcSwap<AppState>>,
     pool: Arc<ConnectionPool>,
     start_time: Arc<Instant>,
+    metrics: Arc<crate::metrics::Metrics>,
 ) {
     let io = TokioIo::new(stream);
     let svc = service_fn(move |req| {
         let app_state = app_state.clone();
         let pool = pool.clone();
         let start_time = start_time.clone();
-        async move { handler::handle(app_state, pool, addr, start_time, false, req).await }
+        let metrics = metrics.clone();
+        async move { handler::handle(app_state, pool, addr, start_time, metrics, false, req).await }
     });
     if let Err(e) = http1::Builder::new().serve_connection(io, svc).await {
         error!(%addr, "connection error: {e}");
@@ -203,6 +233,7 @@ async fn serve_tls(
     app_state: Arc<ArcSwap<AppState>>,
     pool: Arc<ConnectionPool>,
     start_time: Arc<Instant>,
+    metrics: Arc<crate::metrics::Metrics>,
 ) {
     match acceptor.accept(stream).await {
         Ok(tls_stream) => {
@@ -211,7 +242,8 @@ async fn serve_tls(
                 let app_state = app_state.clone();
                 let pool = pool.clone();
                 let start_time = start_time.clone();
-                async move { handler::handle(app_state, pool, addr, start_time, true, req).await }
+                let metrics = metrics.clone();
+                async move { handler::handle(app_state, pool, addr, start_time, metrics, true, req).await }
             });
             if let Err(e) = auto::Builder::new(TokioExecutor::new())
                 .serve_connection(io, svc)
