@@ -243,7 +243,9 @@ async fn serve_tls(
                 let pool = pool.clone();
                 let start_time = start_time.clone();
                 let metrics = metrics.clone();
-                async move { handler::handle(app_state, pool, addr, start_time, metrics, true, req).await }
+                async move {
+                    handler::handle(app_state, pool, addr, start_time, metrics, true, req).await
+                }
             });
             if let Err(e) = auto::Builder::new(TokioExecutor::new())
                 .serve_connection(io, svc)
