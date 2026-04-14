@@ -28,6 +28,9 @@ Plain HTTP/1.1 mode is preserved — `[tls]` config section is optional.
 - **WASM plugin chains** per route — load `.wasm` plugins that can allow or block requests
 - **Hot config reload** — watches config file, reloads routes and plugins without restart
 - **Connection pooling** with stale connection retry
+- **Prometheus metrics** endpoint (`/metrics`) — request counters, status class buckets, mean response time
+- **Upstream health checks** — background loop polls `GET /health` per route every 10s; marks unhealthy after 3 failures (503), auto-recovers after 2 successes
+- **Structured access logs** — per-request `tracing::info!` with `method`, `path`, `status`, `elapsed_ms`, `client_ip`
 - **Health check** endpoint (`/health`) with version and uptime
 - **Upstream timeouts** (504 Gateway Timeout)
 - **Structured JSON logging** via tracing
@@ -107,7 +110,7 @@ Routes are matched top-to-bottom; first prefix match wins.
 ## Development
 
 ```bash
-cargo test          # Run tests (61 tests)
+cargo test          # Run tests (78 tests)
 cargo clippy        # Lint
 cargo fmt           # Format
 ```
@@ -118,7 +121,7 @@ cargo fmt           # Format
 - [x] **M2:** WASM plugin runtime (wasmtime)
 - [x] **M3:** Hot reload + per-route plugin chains
 - [x] **M4:** TLS termination + HTTP/2 + ACME auto-provisioning
-- [ ] **M5:** Observability + metrics
+- [x] **M5:** Observability + metrics
 - [ ] **M6:** Documentation + demo
 
 ## License
