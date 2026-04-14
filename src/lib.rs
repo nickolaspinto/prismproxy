@@ -2,6 +2,8 @@ pub mod acme;
 pub mod config;
 pub mod error;
 pub mod handler;
+pub mod health_check;
+pub mod metrics;
 pub mod plugin;
 pub mod pool;
 pub mod proxy;
